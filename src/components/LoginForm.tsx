@@ -7,13 +7,19 @@ import { createClient } from "@/lib/supabase/client";
 
 type Mode = "signin" | "signup";
 
-export function LoginForm({ nextPath }: { nextPath: string }) {
+export function LoginForm({
+  nextPath,
+  initialError = null,
+}: {
+  nextPath: string;
+  initialError?: string | null;
+}) {
   const router = useRouter();
   const [mode, setMode] = useState<Mode>("signin");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [name, setName] = useState("");
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(initialError);
   const [notice, setNotice] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
 
@@ -30,13 +36,22 @@ export function LoginForm({ nextPath }: { nextPath: string }) {
         const { data, error } = await supabase.auth.signUp({
           email,
           password,
-          options: { data: { display_name: name || email.split("@")[0] } },
+          options: {
+            data: { display_name: name || email.split("@")[0] },
+            // The confirmation link must come back to /auth/callback, which is
+            // where the PKCE code gets exchanged for a session. Without this
+            // Supabase falls back to the Site URL and the code is never
+            // redeemed. Built from the live origin so it works on any domain.
+            emailRedirectTo: `${window.location.origin}/auth/callback?next=${encodeURIComponent(nextPath)}`,
+          },
         });
         if (error) throw error;
 
         // With email confirmation enabled there is no session yet.
         if (!data.session) {
-          setNotice("Check your inbox to confirm your email, then sign in.");
+          setNotice(
+            "Check your inbox to confirm your email. Open the link on this device, then sign in.",
+          );
           setMode("signin");
           return;
         }
