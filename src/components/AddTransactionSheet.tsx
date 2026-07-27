@@ -6,6 +6,13 @@ import { useFormStatus } from "react-dom";
 import { addTransactionAction, logFixedExpenseAction, type ActionResult } from "@/app/actions";
 import { Sheet } from "@/components/Sheet";
 import { currencySymbol, money } from "@/lib/format";
+import {
+  EMPTY_SUGGESTIONS,
+  matchMerchants,
+  suggestedAmounts,
+  type MerchantSuggestion,
+  type SuggestionIndex,
+} from "@/lib/suggestions";
 import type { Category, FixedExpense, PaymentMethod, Profile, TxnKind } from "@/lib/types";
 
 const today = () => new Date().toISOString().slice(0, 10);
@@ -43,6 +50,9 @@ export function AddTransactionSheet({
   const [saveAsFixed, setSaveAsFixed] = useState(false);
   const [merchant, setMerchant] = useState("");
   const [quickPending, setQuickPending] = useState<string | null>(null);
+  const [suggestions, setSuggestions] = useState<SuggestionIndex>(EMPTY_SUGGESTIONS);
+  const [pickedMerchant, setPickedMerchant] = useState<MerchantSuggestion | null>(null);
+  const [showNameHints, setShowNameHints] = useState(false);
 
   const [state, formAction] = useActionState(
     async (_prev: ActionResult | null, formData: FormData) => {
@@ -72,6 +82,8 @@ export function AddTransactionSheet({
     setSaveAsFixed(false);
     setMerchant("");
     setQuickPending(null);
+    setPickedMerchant(null);
+    setShowNameHints(false);
     setPaymentMethodId(
       profile.default_payment_method_id ?? paymentMethods.find((m) => m.is_default)?.id ?? "",
     );
@@ -81,6 +93,53 @@ export function AddTransactionSheet({
   useEffect(() => {
     if (categoryId && !visibleCategories.some((c) => c.id === categoryId)) setCategoryId("");
   }, [categoryId, visibleCategories]);
+
+  // Autocomplete data is fetched on first open, not on page load, so browsing
+  // the app stays cheap. The response is cached, so reopening costs nothing.
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+
+    fetch("/api/suggestions")
+      .then((response) => (response.ok ? response.json() : EMPTY_SUGGESTIONS))
+      .then((data: SuggestionIndex) => {
+        if (!cancelled) setSuggestions(data);
+      })
+      .catch(() => {
+        // Suggestions are a convenience — never block logging an expense.
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [open]);
+
+  const nameHints = useMemo(
+    () => (kind === "expense" ? matchMerchants(suggestions.merchants, merchant) : []),
+    [kind, suggestions.merchants, merchant],
+  );
+
+  const amountHints = useMemo(
+    () =>
+      kind === "expense"
+        ? suggestedAmounts(suggestions, { merchant: pickedMerchant, categoryId })
+        : [],
+    [kind, suggestions, pickedMerchant, categoryId],
+  );
+
+  /** Picking a remembered name fills in everything it is usually paired with. */
+  const applySuggestion = (suggestion: MerchantSuggestion) => {
+    setMerchant(suggestion.name);
+    setPickedMerchant(suggestion);
+    setShowNameHints(false);
+    if (!amount && suggestion.amounts[0]) setAmount(String(suggestion.amounts[0]));
+    if (suggestion.categoryId && visibleCategories.some((c) => c.id === suggestion.categoryId)) {
+      setCategoryId(suggestion.categoryId);
+    }
+    if (suggestion.paymentMethodId && paymentMethods.some((m) => m.id === suggestion.paymentMethodId)) {
+      setPaymentMethodId(suggestion.paymentMethodId);
+    }
+  };
 
   return (
     <Sheet open={open} onClose={onClose} title={kind === "expense" ? "New expense" : "New income"}>
@@ -167,6 +226,26 @@ export function AddTransactionSheet({
               className="w-[7ch] bg-transparent text-4xl font-semibold text-ink outline-none placeholder:text-muted/50"
             />
           </div>
+
+          {/* Amounts you actually use, narrowing as the form gets specific. */}
+          {amountHints.length > 0 && (
+            <div className="mt-4 flex flex-wrap justify-center gap-2">
+              {amountHints.map((value) => (
+                <button
+                  key={value}
+                  type="button"
+                  onClick={() => setAmount(String(value))}
+                  className={`dinx-tap rounded-full px-3 py-1.5 text-sm font-medium ${
+                    amount === String(value)
+                      ? "bg-plum-600 text-white"
+                      : "bg-card text-ink-soft shadow-sm"
+                  }`}
+                >
+                  {money(value, currency)}
+                </button>
+              ))}
+            </div>
+          )}
         </div>
 
         {/* Category --------------------------------------------------------- */}
@@ -285,16 +364,60 @@ export function AddTransactionSheet({
           <label htmlFor="merchant" className="dinx-label">
             {kind === "expense" ? "Where" : "Source"}
           </label>
-          <input
-            id="merchant"
-            name="merchant"
-            type="text"
-            autoComplete="off"
-            value={merchant}
-            onChange={(e) => setMerchant(e.target.value)}
-            placeholder={kind === "expense" ? "Nike Store" : "Monthly salary"}
-            className="dinx-field"
-          />
+          <div className="relative">
+            <input
+              id="merchant"
+              name="merchant"
+              type="text"
+              autoComplete="off"
+              value={merchant}
+              onChange={(e) => {
+                setMerchant(e.target.value);
+                setPickedMerchant(null);
+                setShowNameHints(true);
+              }}
+              onFocus={() => setShowNameHints(true)}
+              // Delayed so a tap on a suggestion registers before the list hides.
+              onBlur={() => setTimeout(() => setShowNameHints(false), 150)}
+              placeholder={kind === "expense" ? "Nike Store" : "Monthly salary"}
+              className="dinx-field"
+            />
+
+            {showNameHints && nameHints.length > 0 && (
+              <ul className="absolute z-10 mt-1 max-h-56 w-full overflow-y-auto rounded-2xl border border-line bg-card py-1 shadow-lg">
+                {nameHints.map((hint) => {
+                  const category = categories.find((c) => c.id === hint.categoryId);
+                  return (
+                    <li key={hint.name}>
+                      <button
+                        type="button"
+                        onMouseDown={(e) => e.preventDefault()}
+                        onClick={() => applySuggestion(hint)}
+                        className="flex w-full items-center gap-3 px-4 py-2.5 text-left active:bg-page"
+                      >
+                        <span className="text-base" aria-hidden>
+                          {category?.emoji ?? "🧾"}
+                        </span>
+                        <span className="min-w-0 flex-1">
+                          <span className="block truncate text-sm font-medium text-ink">
+                            {hint.name}
+                          </span>
+                          <span className="block truncate text-xs text-muted">
+                            {category?.name ?? "Uncategorised"} · used {hint.count}×
+                          </span>
+                        </span>
+                        {hint.amounts[0] !== undefined && (
+                          <span className="shrink-0 text-sm font-semibold text-plum-600">
+                            {money(hint.amounts[0], currency)}
+                          </span>
+                        )}
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </div>
         </div>
 
         {/* Save as fixed — needs a name to key the shortcut on. ------------- */}
