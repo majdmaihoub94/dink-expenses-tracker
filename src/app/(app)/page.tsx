@@ -27,7 +27,7 @@ export default async function HomePage({
   searchParams: Promise<{ cycle?: string }>;
 }) {
   const { cycle: cycleKey } = await searchParams;
-  const { profile, household, members, categories } = await requireContext();
+  const { profile, household, members, categories, paymentMethods } = await requireContext();
   const cycle = resolveCycle(household, cycleKey);
 
   const [transactions, allContributions, goals, planned, trend] = await Promise.all([
@@ -222,6 +222,9 @@ export default async function HomePage({
           members={members}
           currency={currency}
           emptyLabel={`Nothing logged for ${cycle.label} yet. Tap + to start.`}
+          profile={profile}
+          categories={categories}
+          paymentMethods={paymentMethods}
         />
       </section>
 

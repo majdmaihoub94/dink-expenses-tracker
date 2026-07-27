@@ -23,6 +23,7 @@ export function TransactionsView({
   currency,
   cycle,
   trend,
+  profile,
 }: {
   transactions: TransactionWithRefs[];
   categories: Category[];
@@ -31,6 +32,7 @@ export function TransactionsView({
   currency: string;
   cycle: Cycle;
   trend: { key: string; label: string; value: number }[];
+  profile: Profile;
 }) {
   const { openAdd } = useShell();
   const [filter, setFilter] = useState<Filter>({ kind: "all", categoryId: null, personId: null });
@@ -202,6 +204,9 @@ export function TransactionsView({
           members={members}
           currency={currency}
           emptyLabel="Nothing matches those filters."
+          profile={profile}
+          categories={categories}
+          paymentMethods={paymentMethods}
         />
       </section>
     </div>

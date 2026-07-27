@@ -11,7 +11,7 @@ export default async function TransactionsPage({
   searchParams: Promise<{ cycle?: string }>;
 }) {
   const { cycle: cycleKey } = await searchParams;
-  const { household, members, categories, paymentMethods } = await requireContext();
+  const { profile, household, members, categories, paymentMethods } = await requireContext();
   const cycle = resolveCycle(household, cycleKey);
 
   const [transactions, trend] = await Promise.all([
@@ -37,6 +37,7 @@ export default async function TransactionsPage({
         categories={categories}
         paymentMethods={paymentMethods}
         members={members}
+        profile={profile}
         currency={household.currency}
         cycle={cycle}
         trend={trend.map((t) => ({

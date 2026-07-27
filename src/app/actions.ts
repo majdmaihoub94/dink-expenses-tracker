@@ -205,6 +205,47 @@ export async function addTransactionAction(formData: FormData): Promise<ActionRe
   return OK;
 }
 
+/**
+ * Edits an existing transaction. `created_by` is deliberately left alone — it
+ * records who originally logged it, which stays true after an edit.
+ */
+export async function updateTransactionAction(formData: FormData): Promise<ActionResult> {
+  const { supabase, profile, householdId } = await requireActor();
+
+  const id = str(formData, "id");
+  if (!id) return fail("Missing transaction.");
+
+  const amount = num(formData, "amount");
+  if (amount <= 0) return fail("Enter an amount greater than zero.");
+
+  const kind = str(formData, "kind") === "income" ? "income" : "expense";
+
+  const { error } = await supabase
+    .from("transactions")
+    .update({
+      kind,
+      amount,
+      tax_amount: num(formData, "tax_amount"),
+      income_kind: kind === "income" ? str(formData, "income_kind") || "salary" : null,
+      category_id: str(formData, "category_id") || null,
+      payment_method_id: str(formData, "payment_method_id") || null,
+      paid_by: str(formData, "paid_by") || profile.id,
+      merchant: str(formData, "merchant") || null,
+      note: str(formData, "note") || null,
+      occurred_on: str(formData, "occurred_on") || new Date().toISOString().slice(0, 10),
+      is_shared: kind === "expense" ? bool(formData, "is_shared") : false,
+      split_percent: Number(str(formData, "split_percent") || "50"),
+    })
+    .eq("id", id)
+    // Redundant next to RLS, but makes the intent explicit at the call site.
+    .eq("household_id", householdId);
+
+  if (error) return fail(error.message);
+
+  refreshAll();
+  return OK;
+}
+
 export async function deleteTransactionAction(formData: FormData): Promise<ActionResult> {
   const { supabase } = await requireActor();
   const id = str(formData, "id");
