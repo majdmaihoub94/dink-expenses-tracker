@@ -17,6 +17,7 @@ import {
   updateHouseholdAction,
   updateProfileAction,
 } from "@/app/actions";
+import { ImportStatementSheet } from "@/components/ImportStatementSheet";
 import { Sheet } from "@/components/Sheet";
 import { money } from "@/lib/format";
 import type { Category, FixedExpense, Household, PaymentMethod, Profile } from "@/lib/types";
@@ -26,6 +27,7 @@ type Panel =
   | "notifications"
   | "categories"
   | "fixed"
+  | "import"
   | "accounts"
   | "household"
   | "invite"
@@ -112,6 +114,12 @@ export function ProfileView({
           onClick={() => setPanel("accounts")}
         />
         <Row
+          emoji="📄"
+          title="Import a statement"
+          caption="PDF, CSV or Excel — reviewed before saving"
+          onClick={() => setPanel("import")}
+        />
+        <Row
           emoji="🗓️"
           title="Budget cycle"
           caption={`${ordinal(household.cycle_start_day)} to ${ordinal(
@@ -165,6 +173,15 @@ export function ProfileView({
         paymentMethods={paymentMethods}
         members={members}
         defaultId={profile.default_payment_method_id}
+      />
+      <ImportStatementSheet
+        open={panel === "import"}
+        onClose={() => setPanel(null)}
+        profile={profile}
+        members={members}
+        categories={categories}
+        paymentMethods={paymentMethods}
+        currency={household.currency}
       />
       <HouseholdPanel open={panel === "household"} onClose={() => setPanel(null)} household={household} />
       <InvitePanel
