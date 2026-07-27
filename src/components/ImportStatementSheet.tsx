@@ -30,6 +30,7 @@ export function ImportStatementSheet({
 }) {
   const [stage, setStage] = useState<Stage>("pick");
   const [rows, setRows] = useState<ParsedRow[]>([]);
+  const [usedAi, setUsedAi] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [inserted, setInserted] = useState(0);
   const [paidBy, setPaidBy] = useState(profile.id);
@@ -67,6 +68,7 @@ export function ImportStatementSheet({
       }
 
       setRows(data.rows as ParsedRow[]);
+      setUsedAi(Boolean(data.usedAi));
       setStage("review");
     } catch {
       setError("Upload failed. Check your connection and try again.");
@@ -115,8 +117,9 @@ export function ImportStatementSheet({
             <p className="mb-2 font-semibold text-ink">🔒 How your statement is handled</p>
             <ul className="space-y-1">
               <li>• Read in memory and <strong>never saved to disk</strong> or cloud storage.</li>
-              <li>• Processed on DINX&rsquo;s own server — no AI service, no third party.</li>
-              <li>• Card numbers, sort codes and account numbers are stripped out.</li>
+              <li>• Card numbers, sort codes and account numbers are stripped out first.</li>
+              <li>• Read by DINX&rsquo;s own parser. Only if that fails does the redacted text
+                go to Claude to be read — you&rsquo;ll be told when that happens.</li>
               <li>• Nothing is added until you review and confirm it below.</li>
             </ul>
           </div>
@@ -171,6 +174,13 @@ export function ImportStatementSheet({
 
       {stage === "review" && (
         <div className="space-y-4">
+          {usedAi && (
+            <p className="rounded-2xl bg-coral-soft px-4 py-3 text-xs text-ink-soft">
+              🤖 DINX&rsquo;s own parser couldn&rsquo;t read this layout, so the redacted text was
+              sent to Claude to extract. Check the rows below carefully before importing.
+            </p>
+          )}
+
           <div className="flex items-baseline justify-between rounded-2xl bg-page px-4 py-3">
             <span className="text-sm text-muted">
               {selected.length} of {rows.length} selected
