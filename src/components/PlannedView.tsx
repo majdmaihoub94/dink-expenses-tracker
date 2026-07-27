@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useFormStatus } from "react-dom";
 
 import {
+  bulkImportPlannedExpensesAction,
   deletePlannedExpenseAction,
   markPlannedPaidAction,
   savePlannedExpenseAction,
@@ -35,6 +36,7 @@ export function PlannedView({
 }) {
   const [editing, setEditing] = useState<PlannedExpense | "new" | null>(null);
   const [payFor, setPayFor] = useState<PlannedExpense | null>(null);
+  const [importing, setImporting] = useState(false);
 
   const paymentFor = (id: string) => payments.find((p) => p.planned_expense_id === id);
   const paid = expenses.filter((e) => paymentFor(e.id));
@@ -69,13 +71,22 @@ export function PlannedView({
         )}
       </section>
 
-      <button
-        type="button"
-        onClick={() => setEditing("new")}
-        className="dinx-tap w-full rounded-2xl bg-card py-3 text-sm font-semibold text-plum-600 shadow-[0_6px_20px_-16px_rgba(58,42,79,0.5)]"
-      >
-        + Add an expected bill
-      </button>
+      <div className="grid grid-cols-2 gap-3">
+        <button
+          type="button"
+          onClick={() => setEditing("new")}
+          className="dinx-tap rounded-2xl bg-card py-3 text-sm font-semibold text-plum-600 shadow-[0_6px_20px_-16px_rgba(58,42,79,0.5)]"
+        >
+          + Add a bill
+        </button>
+        <button
+          type="button"
+          onClick={() => setImporting(true)}
+          className="dinx-tap rounded-2xl bg-card py-3 text-sm font-semibold text-plum-600 shadow-[0_6px_20px_-16px_rgba(58,42,79,0.5)]"
+        >
+          Paste a list
+        </button>
+      </div>
 
       {expenses.length === 0 && (
         <div className="dinx-card text-center">
@@ -127,6 +138,8 @@ export function PlannedView({
           </div>
         </section>
       )}
+
+      <ImportSheet open={importing} onClose={() => setImporting(false)} />
 
       <PlannedSheet
         expense={editing}
@@ -220,6 +233,58 @@ function PlannedRow({
         )}
       </div>
     </article>
+  );
+}
+
+function ImportSheet({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const [error, setError] = useState<string | null>(null);
+  if (!open) return null;
+
+  return (
+    <Sheet open onClose={onClose} title="Paste your bills">
+      <form
+        action={async (formData) => {
+          const result = await bulkImportPlannedExpensesAction(formData);
+          if (result.ok) onClose();
+          else setError(result.error);
+        }}
+        className="space-y-4"
+      >
+        <p className="rounded-2xl bg-plum-50 px-4 py-3 text-xs text-ink-soft">
+          One per line: <span className="font-mono">Name, amount, category, due day</span>
+          <br />
+          Category and due day are optional. Any category you name that does not exist yet is
+          created for you.
+        </p>
+
+        <textarea
+          name="planned_expenses"
+          rows={12}
+          required
+          placeholder={"🏠 Rent, 1250, Housing, 1\n🚗 Car loan, 315, Transport, 5\n📺 Netflix, 13, Subscriptions"}
+          className="dinx-field resize-none font-mono text-sm"
+        />
+
+        <label className="flex items-center gap-3 rounded-2xl bg-page px-4 py-3">
+          <input
+            type="checkbox"
+            name="replace"
+            className="relative h-6 w-11 shrink-0 appearance-none rounded-full bg-line transition-colors checked:bg-plum-500
+                       before:absolute before:top-0.5 before:left-0.5 before:h-5 before:w-5 before:rounded-full
+                       before:bg-white before:transition-transform checked:before:translate-x-5"
+          />
+          <span className="text-sm text-ink">Replace the current bills</span>
+        </label>
+
+        {error && (
+          <p role="alert" className="rounded-2xl bg-rose/10 px-4 py-3 text-sm text-rose">
+            {error}
+          </p>
+        )}
+
+        <SubmitButton label="Import bills" />
+      </form>
+    </Sheet>
   );
 }
 

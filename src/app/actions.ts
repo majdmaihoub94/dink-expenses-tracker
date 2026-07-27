@@ -290,6 +290,71 @@ export async function savePlannedExpenseAction(formData: FormData): Promise<Acti
 
 // Bound directly to a <form action>, so these return void — React requires it
 // and no caller reads the result.
+/**
+ * Bulk import expected bills, one per line:
+ *   🏠 Rent, 1250, Housing, 1
+ * Amount and category are optional after the name; the fourth field is the day
+ * of the month it is due. Categories named here are created if missing.
+ */
+export async function bulkImportPlannedExpensesAction(formData: FormData): Promise<ActionResult> {
+  const { supabase, householdId } = await requireActor();
+
+  const raw = str(formData, "planned_expenses");
+  if (!raw) return fail("Paste at least one line.");
+
+  const byName = await resolveExpenseCategories(supabase, householdId, raw);
+  const emojiLead = /^(\p{Extended_Pictographic}\p{Emoji_Modifier}*️?)\s*/u;
+
+  const rows = raw
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => {
+      const [namePart = "", amountPart = "", categoryPart = "", duePart = ""] = line.split(/[,|;]/);
+
+      // The emoji is kept in the name — planned expenses have no icon field.
+      const name = namePart.trim();
+      const amount = Number.parseFloat(amountPart.replace(/[^0-9.]/g, ""));
+      const dueDay = Number.parseInt(duePart.replace(/[^0-9]/g, ""), 10);
+
+      return {
+        household_id: householdId,
+        name,
+        amount: Number.isFinite(amount) ? Math.round(amount * 100) / 100 : 0,
+        category_id: byName.get(categoryPart.trim().toLowerCase()) ?? null,
+        due_day: Number.isFinite(dueDay) && dueDay >= 1 && dueDay <= 31 ? dueDay : null,
+        active: true,
+      };
+    })
+    .filter((row) => row.name.replace(emojiLead, "").trim().length > 0);
+
+  if (rows.length === 0) {
+    return fail("Couldn't read any lines. Use: Name, amount, category");
+  }
+
+  if (bool(formData, "replace")) {
+    await supabase
+      .from("planned_expenses")
+      .update({ active: false })
+      .eq("household_id", householdId);
+  }
+
+  // No unique constraint on planned_expenses, so replace rather than upsert to
+  // avoid stacking duplicates when the same list is pasted twice.
+  const names = rows.map((r) => r.name);
+  await supabase
+    .from("planned_expenses")
+    .update({ active: false })
+    .eq("household_id", householdId)
+    .in("name", names);
+
+  const { error } = await supabase.from("planned_expenses").insert(rows);
+  if (error) return fail(error.message);
+
+  refreshAll();
+  return OK;
+}
+
 export async function deletePlannedExpenseAction(formData: FormData): Promise<void> {
   const { supabase } = await requireActor();
   await supabase.from("planned_expenses").update({ active: false }).eq("id", str(formData, "id"));
@@ -520,10 +585,60 @@ export async function logFixedExpenseAction(formData: FormData): Promise<ActionR
 }
 
 /**
+ * Maps the category names used in a pasted list to category ids, creating any
+ * that do not exist yet. Naming a category in the paste is a clear enough
+ * signal that you want it — silently dropping to "uncategorised" was worse.
+ */
+async function resolveExpenseCategories(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  householdId: string,
+  raw: string,
+): Promise<Map<string, string>> {
+  const { data: existing } = await supabase
+    .from("categories")
+    .select("id, name")
+    .eq("household_id", householdId)
+    .eq("kind", "expense");
+
+  const byName = new Map(
+    (existing ?? []).map((c) => [String(c.name).trim().toLowerCase(), c.id as string]),
+  );
+
+  // Third field of each line is the category name.
+  const wanted = new Map<string, string>();
+  for (const line of raw.split("\n")) {
+    const name = line.split(/[,|;]/)[2]?.trim();
+    if (name && !byName.has(name.toLowerCase())) wanted.set(name.toLowerCase(), name);
+  }
+
+  if (wanted.size === 0) return byName;
+
+  const { data: created } = await supabase
+    .from("categories")
+    .upsert(
+      [...wanted.values()].map((name, index) => ({
+        household_id: householdId,
+        name,
+        kind: "expense" as const,
+        emoji: "🏷️",
+        sort_order: 500 + index,
+        archived: false,
+      })),
+      { onConflict: "household_id,name,kind" },
+    )
+    .select("id, name");
+
+  for (const category of created ?? []) {
+    byName.set(String(category.name).trim().toLowerCase(), category.id as string);
+  }
+
+  return byName;
+}
+
+/**
  * Bulk import from a pasted list, one per line:
  *   Netflix, 12.99, Subscriptions
- * Category is matched by name against your existing expense categories and
- * left blank when there is no match.
+ * Categories named in the list are created when they do not already exist.
  */
 export async function bulkImportFixedExpensesAction(formData: FormData): Promise<ActionResult> {
   const { supabase, householdId } = await requireActor();
@@ -531,16 +646,7 @@ export async function bulkImportFixedExpensesAction(formData: FormData): Promise
   const raw = str(formData, "fixed_expenses");
   if (!raw) return fail("Paste at least one line.");
 
-  const { data: categories } = await supabase
-    .from("categories")
-    .select("id, name")
-    .eq("household_id", householdId)
-    .eq("kind", "expense")
-    .eq("archived", false);
-
-  const byName = new Map(
-    (categories ?? []).map((c) => [String(c.name).trim().toLowerCase(), c.id as string]),
-  );
+  const byName = await resolveExpenseCategories(supabase, householdId, raw);
 
   const emojiLead = /^(\p{Extended_Pictographic}\p{Emoji_Modifier}*️?)\s*/u;
 
