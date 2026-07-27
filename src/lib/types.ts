@@ -105,6 +105,21 @@ export type PlannedPayment = {
   paid_at: string;
 };
 
+/** A reusable one-tap expense shortcut. */
+export type FixedExpense = {
+  id: string;
+  household_id: string;
+  name: string;
+  amount: number;
+  category_id: string | null;
+  payment_method_id: string | null;
+  emoji: string;
+  use_count: number;
+  last_used_at: string | null;
+  sort_order: number;
+  archived: boolean;
+};
+
 export type SavingsGoal = {
   id: string;
   household_id: string;

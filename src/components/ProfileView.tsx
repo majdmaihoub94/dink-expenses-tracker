@@ -5,7 +5,10 @@ import { useFormStatus } from "react-dom";
 
 import {
   bulkImportCategoriesAction,
+  bulkImportFixedExpensesAction,
   deleteCategoryAction,
+  deleteFixedExpenseAction,
+  saveFixedExpenseAction,
   deletePaymentMethodAction,
   saveCategoryAction,
   savePaymentMethodAction,
@@ -16,9 +19,17 @@ import {
 } from "@/app/actions";
 import { Sheet } from "@/components/Sheet";
 import { money } from "@/lib/format";
-import type { Category, Household, PaymentMethod, Profile } from "@/lib/types";
+import type { Category, FixedExpense, Household, PaymentMethod, Profile } from "@/lib/types";
 
-type Panel = "profile" | "notifications" | "categories" | "accounts" | "household" | "invite" | null;
+type Panel =
+  | "profile"
+  | "notifications"
+  | "categories"
+  | "fixed"
+  | "accounts"
+  | "household"
+  | "invite"
+  | null;
 
 export function ProfileView({
   profile,
@@ -26,12 +37,14 @@ export function ProfileView({
   members,
   categories,
   paymentMethods,
+  fixedExpenses,
 }: {
   profile: Profile;
   household: Household;
   members: Profile[];
   categories: Category[];
   paymentMethods: PaymentMethod[];
+  fixedExpenses: FixedExpense[];
 }) {
   const [panel, setPanel] = useState<Panel>(null);
   const defaultMethod = paymentMethods.find((m) => m.id === profile.default_payment_method_id);
@@ -83,6 +96,16 @@ export function ProfileView({
           onClick={() => setPanel("categories")}
         />
         <Row
+          emoji="📌"
+          title="Fixed expenses"
+          caption={
+            fixedExpenses.length === 0
+              ? "One-tap shortcuts for repeat spends"
+              : `${fixedExpenses.length} shortcut${fixedExpenses.length === 1 ? "" : "s"}`
+          }
+          onClick={() => setPanel("fixed")}
+        />
+        <Row
           emoji="💳"
           title="Accounts & cards"
           caption={defaultMethod ? `Default: ${defaultMethod.name}` : `${paymentMethods.length} accounts`}
@@ -126,6 +149,14 @@ export function ProfileView({
         open={panel === "categories"}
         onClose={() => setPanel(null)}
         categories={categories}
+        currency={household.currency}
+      />
+      <FixedExpensesPanel
+        open={panel === "fixed"}
+        onClose={() => setPanel(null)}
+        fixedExpenses={fixedExpenses}
+        categories={categories}
+        paymentMethods={paymentMethods}
         currency={household.currency}
       />
       <AccountsPanel
@@ -491,6 +522,254 @@ function CategoriesPanel({
               </div>
             </section>
           ))}
+        </div>
+      )}
+    </Sheet>
+  );
+}
+
+function FixedExpensesPanel({
+  open,
+  onClose,
+  fixedExpenses,
+  categories,
+  paymentMethods,
+  currency,
+}: {
+  open: boolean;
+  onClose: () => void;
+  fixedExpenses: FixedExpense[];
+  categories: Category[];
+  paymentMethods: PaymentMethod[];
+  currency: string;
+}) {
+  const [editing, setEditing] = useState<FixedExpense | "new" | null>(null);
+  const [importing, setImporting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  if (!open) return null;
+
+  const existing = editing === "new" ? null : editing;
+  const expenseCategories = categories.filter((c) => c.kind === "expense");
+
+  return (
+    <Sheet open onClose={onClose} title="Fixed expenses">
+      {editing ? (
+        <form
+          action={async (fd) => {
+            const result = await saveFixedExpenseAction(fd);
+            if (result.ok) setEditing(null);
+            else setError(result.error);
+          }}
+          className="space-y-4"
+        >
+          {existing && <input type="hidden" name="id" value={existing.id} />}
+
+          <div className="grid grid-cols-[4.5rem_1fr] gap-3">
+            <div>
+              <label htmlFor="fx-emoji" className="dinx-label">
+                Icon
+              </label>
+              <input
+                id="fx-emoji"
+                name="emoji"
+                defaultValue={existing?.emoji ?? "⚡"}
+                maxLength={4}
+                className="dinx-field text-center text-xl"
+              />
+            </div>
+            <div>
+              <label htmlFor="fx-name" className="dinx-label">
+                Name
+              </label>
+              <input
+                id="fx-name"
+                name="name"
+                defaultValue={existing?.name}
+                placeholder="Weekly shop"
+                required
+                className="dinx-field"
+              />
+            </div>
+          </div>
+
+          <div>
+            <label htmlFor="fx-amount" className="dinx-label">
+              Amount ({currency})
+            </label>
+            <input
+              id="fx-amount"
+              name="amount"
+              type="text"
+              inputMode="decimal"
+              defaultValue={existing ? String(existing.amount) : ""}
+              placeholder="85.00"
+              required
+              className="dinx-field text-lg font-semibold"
+            />
+          </div>
+
+          <div>
+            <label htmlFor="fx-category" className="dinx-label">
+              Category
+            </label>
+            <select
+              id="fx-category"
+              name="category_id"
+              defaultValue={existing?.category_id ?? ""}
+              className="dinx-field"
+            >
+              <option value="">None</option>
+              {expenseCategories.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.emoji} {c.name}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <label htmlFor="fx-method" className="dinx-label">
+              Paid from
+            </label>
+            <select
+              id="fx-method"
+              name="payment_method_id"
+              defaultValue={existing?.payment_method_id ?? ""}
+              className="dinx-field"
+            >
+              <option value="">Your default</option>
+              {paymentMethods.map((m) => (
+                <option key={m.id} value={m.id}>
+                  {m.name}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {error && <p role="alert" className="rounded-2xl bg-rose/10 px-4 py-3 text-sm text-rose">{error}</p>}
+
+          <Submit label={existing ? "Save" : "Add fixed expense"} />
+          <button
+            type="button"
+            onClick={() => setEditing(null)}
+            className="dinx-tap w-full rounded-2xl bg-page py-3 font-semibold text-ink-soft"
+          >
+            Cancel
+          </button>
+        </form>
+      ) : importing ? (
+        <form
+          action={async (fd) => {
+            const result = await bulkImportFixedExpensesAction(fd);
+            if (result.ok) setImporting(false);
+            else setError(result.error);
+          }}
+          className="space-y-4"
+        >
+          <p className="rounded-2xl bg-plum-50 px-4 py-3 text-xs text-ink-soft">
+            One per line: <span className="font-mono">Name, amount, category</span>
+            <br />
+            Lead with an emoji if you like. The category is matched by name against your existing
+            list and left blank when there is no match.
+          </p>
+
+          <textarea
+            name="fixed_expenses"
+            rows={10}
+            required
+            placeholder={
+              "🛒 Weekly shop, 85, Groceries\n📺 Netflix, 12.99, Subscriptions\n🚆 Train pass, 145, Transport\n☕ Coffee, 3.50"
+            }
+            className="dinx-field resize-none font-mono text-sm"
+          />
+
+          <label className="flex items-center gap-3 rounded-2xl bg-page px-4 py-3">
+            <input
+              type="checkbox"
+              name="replace"
+              className="relative h-6 w-11 shrink-0 appearance-none rounded-full bg-line transition-colors checked:bg-plum-500
+                         before:absolute before:top-0.5 before:left-0.5 before:h-5 before:w-5 before:rounded-full
+                         before:bg-white before:transition-transform checked:before:translate-x-5"
+            />
+            <span className="text-sm text-ink">Replace the current list</span>
+          </label>
+
+          {error && <p role="alert" className="rounded-2xl bg-rose/10 px-4 py-3 text-sm text-rose">{error}</p>}
+
+          <Submit label="Import fixed expenses" />
+          <button
+            type="button"
+            onClick={() => setImporting(false)}
+            className="dinx-tap w-full rounded-2xl bg-page py-3 font-semibold text-ink-soft"
+          >
+            Cancel
+          </button>
+        </form>
+      ) : (
+        <div className="space-y-4">
+          <p className="rounded-2xl bg-plum-50 px-4 py-3 text-xs text-ink-soft">
+            Shortcuts for spends you repeat. They appear under <strong>Quick add</strong> at the top
+            of the add sheet — one tap logs the whole thing.
+          </p>
+
+          <div className="grid grid-cols-2 gap-2">
+            <button
+              type="button"
+              onClick={() => setEditing("new")}
+              className="dinx-tap rounded-2xl bg-plum-600 py-3 text-sm font-semibold text-white"
+            >
+              + New
+            </button>
+            <button
+              type="button"
+              onClick={() => setImporting(true)}
+              className="dinx-tap rounded-2xl bg-page py-3 text-sm font-semibold text-plum-600"
+            >
+              Paste a list
+            </button>
+          </div>
+
+          {fixedExpenses.length === 0 ? (
+            <p className="py-6 text-center text-sm text-muted">
+              Nothing saved yet. Tick “Save as fixed” when adding an expense, or paste a list.
+            </p>
+          ) : (
+            <div className="space-y-1">
+              {fixedExpenses.map((fixed) => {
+                const category = categories.find((c) => c.id === fixed.category_id);
+                return (
+                  <div key={fixed.id} className="flex items-center gap-3 rounded-2xl bg-page px-3 py-2.5">
+                    <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-card text-base" aria-hidden>
+                      {fixed.emoji}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setEditing(fixed)}
+                      className="min-w-0 flex-1 text-left"
+                    >
+                      <span className="block truncate text-sm font-medium text-ink">{fixed.name}</span>
+                      <span className="block truncate text-xs text-muted">
+                        {money(Number(fixed.amount), currency)}
+                        {category && ` · ${category.name}`}
+                        {fixed.use_count > 0 && ` · used ${fixed.use_count}×`}
+                      </span>
+                    </button>
+                    <form action={deleteFixedExpenseAction}>
+                      <input type="hidden" name="id" value={fixed.id} />
+                      <button
+                        type="submit"
+                        aria-label={`Remove ${fixed.name}`}
+                        className="dinx-tap px-2 text-muted"
+                      >
+                        ✕
+                      </button>
+                    </form>
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </div>
       )}
     </Sheet>

@@ -5,6 +5,7 @@ import { cycleBounds, cycleFor, type Cycle } from "@/lib/cycle";
 import { createClient } from "@/lib/supabase/server";
 import type {
   Category,
+  FixedExpense,
   Household,
   PaymentMethod,
   PlannedExpense,
@@ -23,6 +24,8 @@ export type SessionContext = {
   partner: Profile | null;
   categories: Category[];
   paymentMethods: PaymentMethod[];
+  /** One-tap shortcuts, surfaced on the add sheet from every screen. */
+  fixedExpenses: FixedExpense[];
 };
 
 const TXN_SELECT = `
@@ -110,7 +113,7 @@ export const requireContext = cache(async function requireContext(): Promise<Ses
 
   if (!profile.household_id) redirect("/onboarding");
 
-  const [householdRes, membersRes, categoriesRes, methodsRes] = await Promise.all([
+  const [householdRes, membersRes, categoriesRes, methodsRes, fixedRes] = await Promise.all([
     supabase.from("households").select("*").eq("id", profile.household_id).single<Household>(),
     supabase
       .from("profiles")
@@ -131,6 +134,13 @@ export const requireContext = cache(async function requireContext(): Promise<Ses
       .eq("archived", false)
       .order("sort_order")
       .order("name"),
+    supabase
+      .from("fixed_expenses")
+      .select("*")
+      .eq("household_id", profile.household_id)
+      .eq("archived", false)
+      .order("use_count", { ascending: false })
+      .order("sort_order"),
   ]);
 
   if (!householdRes.data) redirect("/onboarding");
@@ -144,6 +154,9 @@ export const requireContext = cache(async function requireContext(): Promise<Ses
     partner: members.find((m) => m.id !== profile.id) ?? null,
     categories: (categoriesRes.data ?? []) as Category[],
     paymentMethods: (methodsRes.data ?? []) as PaymentMethod[],
+    // Tolerate a missing table so the app still runs before the fixed-expenses
+    // migration has been applied.
+    fixedExpenses: (fixedRes.data ?? []) as FixedExpense[],
   };
 });
 
@@ -259,6 +272,20 @@ export async function getSavingsContributions(
 
   const { data } = await query;
   return (data ?? []) as SavingsContribution[];
+}
+
+/** Fixed expenses, most-used first so the quick-add rail stays useful. */
+export async function getFixedExpenses(householdId: string): Promise<FixedExpense[]> {
+  const supabase = await createClient();
+  const { data } = await supabase
+    .from("fixed_expenses")
+    .select("*")
+    .eq("household_id", householdId)
+    .eq("archived", false)
+    .order("sort_order")
+    .order("use_count", { ascending: false })
+    .order("name");
+  return (data ?? []) as FixedExpense[];
 }
 
 export async function getSavingsGoals(householdId: string): Promise<SavingsGoal[]> {

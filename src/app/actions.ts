@@ -155,6 +155,20 @@ export async function addTransactionAction(formData: FormData): Promise<ActionRe
 
   const label = str(formData, "merchant") || categoryName || (kind === "income" ? "Income" : "Expense");
 
+  // "Save as fixed" turns this expense into a reusable one-tap shortcut.
+  if (kind === "expense" && bool(formData, "save_as_fixed") && str(formData, "merchant")) {
+    await supabase.from("fixed_expenses").upsert(
+      {
+        household_id: householdId,
+        name: str(formData, "merchant"),
+        amount,
+        category_id: categoryId,
+        payment_method_id: paymentMethodId,
+      },
+      { onConflict: "household_id,name" },
+    );
+  }
+
   await supabase.from("activity_events").insert({
     household_id: householdId,
     type: kind === "income" ? "income_added" : "expense_added",
@@ -355,6 +369,182 @@ export async function undoPlannedPaidAction(formData: FormData): Promise<void> {
   }
 
   refreshAll();
+}
+
+// ---------------------------------------------------------------------------
+// Fixed expenses — reusable one-tap shortcuts
+// ---------------------------------------------------------------------------
+
+export async function saveFixedExpenseAction(formData: FormData): Promise<ActionResult> {
+  const { supabase, householdId } = await requireActor();
+
+  const id = str(formData, "id");
+  const payload = {
+    household_id: householdId,
+    name: str(formData, "name"),
+    amount: num(formData, "amount"),
+    category_id: str(formData, "category_id") || null,
+    payment_method_id: str(formData, "payment_method_id") || null,
+    emoji: str(formData, "emoji") || "⚡",
+  };
+
+  if (!payload.name) return fail("Give the fixed expense a name.");
+  if (payload.amount <= 0) return fail("Enter an amount greater than zero.");
+
+  const { error } = id
+    ? await supabase.from("fixed_expenses").update(payload).eq("id", id)
+    : await supabase
+        .from("fixed_expenses")
+        .upsert(payload, { onConflict: "household_id,name" });
+
+  if (error) return fail(error.message);
+
+  refreshAll();
+  return OK;
+}
+
+export async function deleteFixedExpenseAction(formData: FormData): Promise<void> {
+  const { supabase } = await requireActor();
+  await supabase.from("fixed_expenses").update({ archived: true }).eq("id", str(formData, "id"));
+  refreshAll();
+}
+
+/**
+ * Logs a fixed expense as a real transaction in one tap, and bumps its usage
+ * so the most-used shortcuts stay at the front of the rail.
+ */
+export async function logFixedExpenseAction(formData: FormData): Promise<ActionResult> {
+  const { supabase, profile, household, householdId } = await requireActor();
+
+  const id = str(formData, "id");
+  if (!id) return fail("Missing fixed expense.");
+
+  const { data: fixed } = await supabase.from("fixed_expenses").select("*").eq("id", id).single();
+  if (!fixed) return fail("That fixed expense no longer exists.");
+
+  // Amount and payer can be overridden at log time without editing the template.
+  const amount = num(formData, "amount") || Number(fixed.amount);
+  const paidBy = str(formData, "paid_by") || profile.id;
+  const paymentMethodId =
+    str(formData, "payment_method_id") ||
+    fixed.payment_method_id ||
+    profile.default_payment_method_id;
+
+  const { data: inserted, error } = await supabase
+    .from("transactions")
+    .insert({
+      household_id: householdId,
+      kind: "expense",
+      amount,
+      category_id: fixed.category_id,
+      payment_method_id: paymentMethodId,
+      paid_by: paidBy,
+      created_by: profile.id,
+      merchant: fixed.name,
+      occurred_on: str(formData, "occurred_on") || new Date().toISOString().slice(0, 10),
+      is_shared: true,
+      split_percent: 50,
+    })
+    .select("id")
+    .single();
+
+  if (error) return fail(error.message);
+
+  await supabase
+    .from("fixed_expenses")
+    .update({ use_count: Number(fixed.use_count ?? 0) + 1, last_used_at: new Date().toISOString() })
+    .eq("id", id);
+
+  await supabase.from("activity_events").insert({
+    household_id: householdId,
+    type: "expense_added",
+    actor_id: profile.id,
+    payload: { transaction_id: inserted?.id, amount, label: fixed.name, kind: "expense" },
+  });
+
+  await notifyHousehold({
+    householdId,
+    actorId: profile.id,
+    pref: "notify_partner_expense",
+    payload: {
+      title: `${profile.display_name} spent ${money(amount, household.currency)}`,
+      body: fixed.name,
+      url: "/transactions",
+      tag: `txn-${inserted?.id}`,
+    },
+  });
+
+  refreshAll();
+  return OK;
+}
+
+/**
+ * Bulk import from a pasted list, one per line:
+ *   Netflix, 12.99, Subscriptions
+ * Category is matched by name against your existing expense categories and
+ * left blank when there is no match.
+ */
+export async function bulkImportFixedExpensesAction(formData: FormData): Promise<ActionResult> {
+  const { supabase, householdId } = await requireActor();
+
+  const raw = str(formData, "fixed_expenses");
+  if (!raw) return fail("Paste at least one line.");
+
+  const { data: categories } = await supabase
+    .from("categories")
+    .select("id, name")
+    .eq("household_id", householdId)
+    .eq("kind", "expense")
+    .eq("archived", false);
+
+  const byName = new Map(
+    (categories ?? []).map((c) => [String(c.name).trim().toLowerCase(), c.id as string]),
+  );
+
+  const emojiLead = /^(\p{Extended_Pictographic}\p{Emoji_Modifier}*️?)\s*/u;
+
+  const rows = raw
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line, index) => {
+      const [namePart = "", amountPart = "", categoryPart = ""] = line.split(/[,|;]/);
+
+      const emoji = namePart.trim().match(emojiLead)?.[1] ?? "⚡";
+      const name = namePart.trim().replace(emojiLead, "").trim();
+      const amount = Number.parseFloat(amountPart.replace(/[^0-9.]/g, ""));
+
+      return {
+        household_id: householdId,
+        name,
+        emoji,
+        amount: Number.isFinite(amount) ? Math.round(amount * 100) / 100 : 0,
+        category_id: byName.get(categoryPart.trim().toLowerCase()) ?? null,
+        sort_order: (index + 1) * 10,
+        archived: false,
+      };
+    })
+    .filter((row) => row.name.length > 0 && row.amount > 0);
+
+  if (rows.length === 0) {
+    return fail("Couldn't read any lines. Use: Name, amount, category");
+  }
+
+  if (bool(formData, "replace")) {
+    await supabase
+      .from("fixed_expenses")
+      .update({ archived: true })
+      .eq("household_id", householdId);
+  }
+
+  const { error } = await supabase
+    .from("fixed_expenses")
+    .upsert(rows, { onConflict: "household_id,name" });
+
+  if (error) return fail(error.message);
+
+  refreshAll();
+  return OK;
 }
 
 // ---------------------------------------------------------------------------
