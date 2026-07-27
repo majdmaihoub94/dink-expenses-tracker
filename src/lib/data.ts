@@ -53,13 +53,29 @@ async function createMissingProfile(
     .single<Profile>();
 
   if (error || !data) {
-    throw new Error(
-      `Could not create your DINX profile: ${error?.message ?? "unknown error"}. ` +
-        "This usually means supabase/schema.sql has not been run against this project.",
-    );
+    throw new Error(`Could not create your DINX profile: ${describeDbError(error)}`);
   }
 
   return data;
+}
+
+/** Maps the Postgres failures we can actually act on to a real instruction. */
+function describeDbError(error: { message: string; code?: string } | null): string {
+  const message = error?.message ?? "unknown error";
+
+  // 42501 = insufficient_privilege. The table exists but the `authenticated`
+  // role was never granted access — the grants block at the end of
+  // supabase/schema.sql is what fixes it.
+  if (error?.code === "42501" || /permission denied/i.test(message)) {
+    return `${message}. The tables exist but the "authenticated" role has no privileges on them — re-run the grants section at the end of supabase/schema.sql.`;
+  }
+
+  // 42P01 = undefined_table.
+  if (error?.code === "42P01" || /does not exist/i.test(message)) {
+    return `${message}. Run supabase/schema.sql against this project first.`;
+  }
+
+  return message;
 }
 
 /**

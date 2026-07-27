@@ -434,6 +434,42 @@ create policy push_subscriptions_rw on push_subscriptions
   for all using (profile_id = auth.uid()) with check (profile_id = auth.uid());
 
 -- ----------------------------------------------------------------------------
+-- Grants
+--
+-- Supabase ships default privileges that expose new public tables to the API
+-- roles, but they only fire for tables created by the `postgres` role. Run the
+-- schema as anything else and every request fails with "permission denied for
+-- table". Granting explicitly makes this work whoever applies it.
+--
+-- These are table-level privileges only. The RLS policies above still decide
+-- which rows each person can actually touch.
+-- ----------------------------------------------------------------------------
+grant usage on schema public to anon, authenticated;
+
+grant select, insert, update, delete on
+  households,
+  profiles,
+  categories,
+  payment_methods,
+  transactions,
+  planned_expenses,
+  planned_payments,
+  savings_goals,
+  savings_contributions,
+  activity_events,
+  push_subscriptions
+to authenticated;
+
+grant execute on function current_household_id() to authenticated;
+grant execute on function is_my_household(uuid) to authenticated;
+grant execute on function create_household(text) to authenticated;
+grant execute on function join_household(text) to authenticated;
+
+-- Anything added to this schema later inherits the same access.
+alter default privileges in schema public
+  grant select, insert, update, delete on tables to authenticated;
+
+-- ----------------------------------------------------------------------------
 -- Realtime — drives the live badge when your partner logs something.
 -- ----------------------------------------------------------------------------
 do $$ begin
