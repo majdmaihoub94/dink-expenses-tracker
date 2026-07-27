@@ -5,6 +5,15 @@ import { useFormStatus } from "react-dom";
 
 import { addTransactionAction, logFixedExpenseAction, type ActionResult } from "@/app/actions";
 import { Sheet } from "@/components/Sheet";
+import {
+  AccountRail,
+  CategoryRail,
+  IncomeKindPicker,
+  KindToggle,
+  PersonPicker,
+  SPLIT_OPTIONS,
+  Toggle,
+} from "@/components/TransactionFields";
 import { currencySymbol, money } from "@/lib/format";
 import {
   EMPTY_SUGGESTIONS,
@@ -189,20 +198,7 @@ export function AddTransactionSheet({
         <input type="hidden" name="is_shared" value={isShared ? "true" : "false"} />
 
         {/* Expense / income ------------------------------------------------ */}
-        <div className="flex rounded-full bg-page p-1">
-          {(["expense", "income"] as const).map((option) => (
-            <button
-              key={option}
-              type="button"
-              onClick={() => setKind(option)}
-              className={`dinx-tap flex-1 rounded-full py-2 text-sm font-semibold capitalize transition-colors ${
-                kind === option ? "bg-card text-ink shadow-sm" : "text-muted"
-              }`}
-            >
-              {option}
-            </button>
-          ))}
-        </div>
+        <KindToggle value={kind} onChange={setKind} />
 
         {/* Amount ----------------------------------------------------------- */}
         <div className="rounded-[var(--radius-tile)] bg-page px-4 py-5 text-center">
@@ -249,115 +245,26 @@ export function AddTransactionSheet({
         </div>
 
         {/* Category --------------------------------------------------------- */}
-        <div>
-          <span className="dinx-label">Category</span>
-          <div className="dinx-rail">
-            {visibleCategories.map((category) => {
-              const active = categoryId === category.id;
-              return (
-                <button
-                  key={category.id}
-                  type="button"
-                  onClick={() => setCategoryId(active ? "" : category.id)}
-                  className={`dinx-chip ${
-                    active ? "bg-plum-600 text-white" : "bg-page text-ink-soft"
-                  }`}
-                >
-                  <span aria-hidden>{category.emoji}</span>
-                  {category.name}
-                </button>
-              );
-            })}
-            {visibleCategories.length === 0 && (
-              <p className="py-2 text-sm text-muted">
-                No {kind} categories yet — add them in Profile → Categories.
-              </p>
-            )}
-          </div>
-        </div>
+        <CategoryRail
+          categories={visibleCategories}
+          value={categoryId}
+          onChange={setCategoryId}
+          kind={kind}
+        />
 
         {/* Account ---------------------------------------------------------- */}
-        <div>
-          <span className="dinx-label">{kind === "expense" ? "Paid from" : "Paid into"}</span>
-          <div className="dinx-rail">
-            {paymentMethods.map((method) => {
-              const active = paymentMethodId === method.id;
-              return (
-                <button
-                  key={method.id}
-                  type="button"
-                  onClick={() => setPaymentMethodId(method.id)}
-                  className={`dinx-chip border ${
-                    active ? "border-transparent text-white" : "border-line bg-card text-ink-soft"
-                  }`}
-                  style={active ? { backgroundColor: method.color } : undefined}
-                >
-                  <span
-                    className="h-2 w-2 rounded-full"
-                    style={{ backgroundColor: active ? "#ffffff" : method.color }}
-                    aria-hidden
-                  />
-                  {method.name}
-                  {method.is_default && !active && (
-                    <span className="text-[10px] text-muted">default</span>
-                  )}
-                </button>
-              );
-            })}
-          </div>
-        </div>
+        <AccountRail
+          paymentMethods={paymentMethods}
+          value={paymentMethodId}
+          onChange={setPaymentMethodId}
+          kind={kind}
+        />
 
         {/* Who ------------------------------------------------------------- */}
-        {members.length > 1 && (
-          <div>
-            <span className="dinx-label">Logged for</span>
-            <div className="flex gap-2">
-              {members.map((member) => {
-                const active = paidBy === member.id;
-                return (
-                  <button
-                    key={member.id}
-                    type="button"
-                    onClick={() => setPaidBy(member.id)}
-                    className={`dinx-tap flex flex-1 items-center justify-center gap-2 rounded-2xl px-3 py-3 text-sm font-medium ${
-                      active ? "bg-plum-800 text-white" : "bg-page text-ink-soft"
-                    }`}
-                  >
-                    <span aria-hidden>{member.emoji}</span>
-                    {member.id === profile.id ? "Me" : member.display_name}
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-        )}
+        <PersonPicker members={members} value={paidBy} onChange={setPaidBy} selfId={profile.id} />
 
         {/* Income kind ------------------------------------------------------ */}
-        {kind === "income" && (
-          <div>
-            <span className="dinx-label">Type</span>
-            <div className="flex gap-2">
-              {(
-                [
-                  { value: "salary", label: "Salary" },
-                  { value: "extra", label: "Extra" },
-                  { value: "other", label: "Other" },
-                ] as const
-              ).map((option) => (
-                <button
-                  key={option.value}
-                  type="button"
-                  onClick={() => setIncomeKind(option.value)}
-                  className={`dinx-tap flex-1 rounded-2xl py-3 text-sm font-medium ${
-                    incomeKind === option.value ? "bg-mint text-white" : "bg-page text-ink-soft"
-                  }`}
-                >
-                  {option.label}
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
+        {kind === "income" && <IncomeKindPicker value={incomeKind} onChange={setIncomeKind} />}
 
         {/* Description ------------------------------------------------------ */}
         <div>
@@ -491,14 +398,7 @@ export function AddTransactionSheet({
               <>
                 <label className="flex items-center justify-between gap-3">
                   <span className="text-sm font-medium text-ink">Shared cost</span>
-                  <input
-                    type="checkbox"
-                    checked={isShared}
-                    onChange={(e) => setIsShared(e.target.checked)}
-                    className="h-6 w-11 appearance-none rounded-full bg-line transition-colors checked:bg-plum-500 relative
-                               before:absolute before:top-0.5 before:left-0.5 before:h-5 before:w-5 before:rounded-full
-                               before:bg-white before:transition-transform checked:before:translate-x-5"
-                  />
+                  <Toggle checked={isShared} onChange={setIsShared} />
                 </label>
                 {isShared && (
                   <div>
@@ -506,12 +406,11 @@ export function AddTransactionSheet({
                       Your share
                     </label>
                     <select id="split_percent" name="split_percent" defaultValue="50" className="dinx-field bg-card">
-                      <option value="50">Split 50 / 50</option>
-                      <option value="100">All mine</option>
-                      <option value="0">All theirs</option>
-                      <option value="60">60 / 40</option>
-                      <option value="70">70 / 30</option>
-                      <option value="75">75 / 25</option>
+                      {SPLIT_OPTIONS.map((option) => (
+                        <option key={option.value} value={option.value}>
+                          {option.label}
+                        </option>
+                      ))}
                     </select>
                   </div>
                 )}

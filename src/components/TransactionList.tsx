@@ -4,9 +4,10 @@ import { format, isToday, isYesterday, parseISO } from "date-fns";
 import { useMemo, useState } from "react";
 
 import { deleteTransactionAction } from "@/app/actions";
+import { EditTransactionSheet } from "@/components/EditTransactionSheet";
 import { Sheet } from "@/components/Sheet";
 import { money, signedMoney } from "@/lib/format";
-import type { Profile, TransactionWithRefs } from "@/lib/types";
+import type { Category, PaymentMethod, Profile, TransactionWithRefs } from "@/lib/types";
 
 function dayLabel(date: string): string {
   const d = parseISO(date);
@@ -21,15 +22,24 @@ export function TransactionList({
   currency,
   variant = "light",
   emptyLabel = "Nothing logged yet.",
+  profile,
+  categories,
+  paymentMethods,
 }: {
   transactions: TransactionWithRefs[];
   members: Profile[];
   currency: string;
   variant?: "light" | "dark";
   emptyLabel?: string;
+  /** Supplying these three enables editing from the detail sheet. */
+  profile?: Profile;
+  categories?: Category[];
+  paymentMethods?: PaymentMethod[];
 }) {
   const [selected, setSelected] = useState<TransactionWithRefs | null>(null);
+  const [editing, setEditing] = useState<TransactionWithRefs | null>(null);
   const isDark = variant === "dark";
+  const canEdit = Boolean(profile && categories && paymentMethods);
 
   const groups = useMemo(() => {
     const map = new Map<string, TransactionWithRefs[]>();
@@ -73,7 +83,27 @@ export function TransactionList({
         members={members}
         currency={currency}
         onClose={() => setSelected(null)}
+        onEdit={
+          canEdit
+            ? () => {
+                setEditing(selected);
+                setSelected(null);
+              }
+            : undefined
+        }
       />
+
+      {editing && canEdit && (
+        <EditTransactionSheet
+          transaction={editing}
+          onClose={() => setEditing(null)}
+          profile={profile!}
+          members={members}
+          categories={categories!}
+          paymentMethods={paymentMethods!}
+          currency={currency}
+        />
+      )}
     </>
   );
 }
@@ -143,11 +173,13 @@ function DetailSheet({
   members,
   currency,
   onClose,
+  onEdit,
 }: {
   transaction: TransactionWithRefs | null;
   members: Profile[];
   currency: string;
   onClose: () => void;
+  onEdit?: () => void;
 }) {
   const [confirming, setConfirming] = useState(false);
   const [pending, setPending] = useState(false);
@@ -185,6 +217,16 @@ function DetailSheet({
         ))}
       </dl>
 
+      {onEdit && (
+        <button
+          type="button"
+          onClick={onEdit}
+          className="dinx-tap mt-5 w-full rounded-2xl bg-plum-600 py-3.5 font-semibold text-white"
+        >
+          Edit transaction
+        </button>
+      )}
+
       <form
         action={async (formData) => {
           setPending(true);
@@ -192,7 +234,7 @@ function DetailSheet({
           setPending(false);
           onClose();
         }}
-        className="mt-5"
+        className="mt-3"
       >
         <input type="hidden" name="id" value={t.id} />
         {confirming ? (
