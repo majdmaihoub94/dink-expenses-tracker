@@ -1,0 +1,157 @@
+@import "tailwindcss";
+
+/* ---------------------------------------------------------------------------
+   DINX design tokens — lifted from the reference mockup: a soft lavender page,
+   white cards, one deep plum hero card, and coral as the single accent.
+--------------------------------------------------------------------------- */
+@theme {
+  --color-page: #f6f3fb;
+  --color-card: #ffffff;
+  --color-ink: #17161c;
+  --color-ink-soft: #565364;
+  --color-muted: #9a97a8;
+  --color-line: #eeeaf4;
+
+  --color-plum-50: #f4effa;
+  --color-plum-100: #e7dcf4;
+  --color-plum-200: #cdb6e6;
+  --color-plum-500: #7c5cfa;
+  --color-plum-600: #6d3fa8;
+  --color-plum-700: #4a3364;
+  --color-plum-800: #3a2a4f;
+  --color-plum-900: #2c1e3e;
+
+  --color-coral: #f0724a;
+  --color-coral-soft: #fde5dc;
+  --color-mint: #2fbf87;
+  --color-mint-soft: #dff5ec;
+  --color-rose: #e5484d;
+
+  --radius-card: 1.75rem;
+  --radius-tile: 1.25rem;
+
+  --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+@layer base {
+  html {
+    /* Stop iOS zooming the page when an input is focused. */
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    background-color: var(--color-page);
+    color: var(--color-ink);
+    font-family: var(--font-sans);
+    /* Room for the fixed bottom nav plus the home indicator. */
+    padding-bottom: calc(5.5rem + env(safe-area-inset-bottom));
+    overscroll-behavior-y: none;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* iOS zooms any input rendered below 16px. Never go under it. */
+  input,
+  select,
+  textarea,
+  button {
+    font-size: max(16px, 1em);
+    font-family: inherit;
+  }
+
+  input[type="number"]::-webkit-outer-spin-button,
+  input[type="number"]::-webkit-inner-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+  }
+
+  ::selection {
+    background: var(--color-plum-100);
+  }
+}
+
+/* Tailwind v4 registers these through `@utility`, which is what makes them
+   composable with `@apply` and with variants like `sm:` or `hover:`. */
+
+@utility dinx-card {
+  @apply rounded-[var(--radius-card)] bg-card p-5 shadow-[0_8px_30px_-12px_rgba(58,42,79,0.16)];
+}
+
+@utility dinx-tile {
+  @apply rounded-[var(--radius-tile)] bg-card p-4 shadow-[0_6px_20px_-14px_rgba(58,42,79,0.28)];
+}
+
+/* The 44px minimum comes from the iOS touch-target guideline. */
+@utility dinx-tap {
+  @apply min-h-[44px] transition-transform duration-100 active:scale-[0.97];
+}
+
+@utility dinx-field {
+  @apply w-full rounded-2xl border border-line bg-page px-4 py-3 text-ink
+         outline-none placeholder:text-muted focus:border-plum-500
+         focus:ring-2 focus:ring-plum-500/20;
+}
+
+@utility dinx-label {
+  @apply mb-2 block text-xs font-semibold tracking-wide text-muted uppercase;
+}
+
+@utility dinx-chip {
+  @apply dinx-tap flex items-center gap-2 rounded-full px-4 py-2 text-sm
+         font-medium whitespace-nowrap;
+}
+
+/* Horizontal chip rails: scrollable but without a visible scrollbar. */
+@utility dinx-rail {
+  @apply flex gap-2 overflow-x-auto pb-1;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+
+  &::-webkit-scrollbar {
+    display: none;
+  }
+}
+
+@utility safe-bottom {
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+@utility safe-top {
+  padding-top: env(safe-area-inset-top);
+}
+
+@keyframes dinx-rise {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes dinx-sheet-in {
+  from {
+    transform: translateY(100%);
+  }
+  to {
+    transform: translateY(0);
+  }
+}
+
+.animate-rise {
+  animation: dinx-rise 0.28s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.animate-sheet {
+  animation: dinx-sheet-in 0.3s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
