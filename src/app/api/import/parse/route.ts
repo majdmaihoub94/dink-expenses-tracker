@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 
+import { aiExtractionAvailable, extractWithAi } from "@/lib/import/ai";
 import { parseCsv } from "@/lib/import/csv";
 import { extractPdfLines } from "@/lib/import/pdf";
 import {
@@ -170,11 +171,21 @@ export async function POST(request: Request) {
   let rows: string[][] = [];
   let columns: ColumnMap;
   let hasHeader = false;
+  let usedAi = false;
 
   try {
     if (format === "pdf") {
-      rows = parseStatementLines(await extractPdfLines(bytes));
+      const lines = await extractPdfLines(bytes);
+      rows = parseStatementLines(lines);
       columns = TEXT_COLUMNS;
+
+      // The rule-based parser handles statements with a readable date/amount
+      // structure. Only when it finds nothing do we fall back to the model —
+      // so the common case never leaves this server.
+      if (rows.length === 0 && aiExtractionAvailable()) {
+        rows = await extractWithAi(lines);
+        usedAi = rows.length > 0;
+      }
     } else {
       const grid =
         format === "xlsx"
@@ -249,6 +260,9 @@ export async function POST(request: Request) {
       rows: withDuplicates,
       truncated: parsed.length > MAX_ROWS,
       format,
+      // Surfaced in the review screen so it is always visible when a statement
+      // was read by the model rather than by the parser.
+      usedAi,
     },
     // The response contains transaction data — never let it be cached.
     { headers: { "Cache-Control": "no-store, private" } },

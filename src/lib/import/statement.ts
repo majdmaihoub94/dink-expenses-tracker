@@ -288,8 +288,21 @@ const TRAILING_MONEY = /(-?£?\s?\d{1,3}(?:,\d{3})*(?:\.\d{2})|-?£?\s?\d+\.\d{2
 export function parseStatementLines(lines: string[]): string[][] {
   const rows: string[][] = [];
 
+  // Statements often print a running balance beside each amount. When they do,
+  // the balance movement tells us the direction with no bank-specific rules:
+  // if the balance fell by the amount it was money out, if it rose it was
+  // money in. Seeded from an opening-balance line where one exists.
+  let previousBalance: number | null = null;
+  const opening = lines
+    .slice(0, 40)
+    .map((l) => l.match(/balance[^0-9£-]*£?\s?(-?[\d,]+\.\d{2})/i)?.[1])
+    .find(Boolean);
+  if (opening) previousBalance = Number(opening.replace(/,/g, ""));
+
   for (const raw of lines) {
-    const line = raw.trim();
+    // Some statements separate columns with " . ", which leaves a trailing
+    // full stop that would otherwise stop the amount matching at end-of-line.
+    const line = raw.trim().replace(/\s+\.\s*$/, "").replace(/\s+\.\s+/g, " ").trim();
     if (!line) continue;
 
     const dateMatch = line.match(LINE_DATE);
@@ -323,9 +336,24 @@ export function parseStatementLines(lines: string[]): string[][] {
     // The trailing-money pattern only matches comma-as-thousands, so stripping
     // commas here is safe.
     const amount = chosen.value.replace(/[£\s,]/g, "");
-    const signed = chosen.credit || amount.startsWith("-") ? amount.replace("-", "") : `-${amount}`;
+    const value = Math.abs(Number(amount));
 
-    rows.push([dateMatch[1], description, signed]);
+    // Two figures means the second is the running balance.
+    const balance =
+      figures.length > 1 ? Number(figures[1].value.replace(/[£\s,]/g, "")) : null;
+
+    let isCredit = chosen.credit || amount.startsWith("-") === false ? chosen.credit : true;
+
+    if (balance !== null && previousBalance !== null && Number.isFinite(value)) {
+      // Whichever direction reconciles the balance wins over any marker.
+      const asExpense = Math.abs(previousBalance - value - balance);
+      const asIncome = Math.abs(previousBalance + value - balance);
+      if (Math.min(asExpense, asIncome) < 0.02) isCredit = asIncome < asExpense;
+    }
+
+    if (balance !== null && Number.isFinite(balance)) previousBalance = balance;
+
+    rows.push([dateMatch[1], description, isCredit ? String(value) : `-${value}`]);
   }
 
   return rows;
