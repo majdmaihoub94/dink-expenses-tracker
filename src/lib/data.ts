@@ -1,9 +1,11 @@
+import { cache } from "react";
 import { redirect } from "next/navigation";
 
 import { cycleBounds, cycleFor, type Cycle } from "@/lib/cycle";
 import { createClient } from "@/lib/supabase/server";
 import type {
   Category,
+  FixedExpense,
   Household,
   PaymentMethod,
   PlannedExpense,
@@ -22,6 +24,8 @@ export type SessionContext = {
   partner: Profile | null;
   categories: Category[];
   paymentMethods: PaymentMethod[];
+  /** One-tap shortcuts, surfaced on the add sheet from every screen. */
+  fixedExpenses: FixedExpense[];
 };
 
 const TXN_SELECT = `
@@ -53,20 +57,40 @@ async function createMissingProfile(
     .single<Profile>();
 
   if (error || !data) {
-    throw new Error(
-      `Could not create your DINX profile: ${error?.message ?? "unknown error"}. ` +
-        "This usually means supabase/schema.sql has not been run against this project.",
-    );
+    throw new Error(`Could not create your DINX profile: ${describeDbError(error)}`);
   }
 
   return data;
 }
 
+/** Maps the Postgres failures we can actually act on to a real instruction. */
+function describeDbError(error: { message: string; code?: string } | null): string {
+  const message = error?.message ?? "unknown error";
+
+  // 42501 = insufficient_privilege. The table exists but the `authenticated`
+  // role was never granted access — the grants block at the end of
+  // supabase/schema.sql is what fixes it.
+  if (error?.code === "42501" || /permission denied/i.test(message)) {
+    return `${message}. The tables exist but the "authenticated" role has no privileges on them — re-run the grants section at the end of supabase/schema.sql.`;
+  }
+
+  // 42P01 = undefined_table.
+  if (error?.code === "42P01" || /does not exist/i.test(message)) {
+    return `${message}. Run supabase/schema.sql against this project first.`;
+  }
+
+  return message;
+}
+
 /**
  * Loads the session context, redirecting to login/onboarding when the user
  * is not ready to see the app yet.
+ *
+ * Wrapped in React's `cache` so the layout and the page it renders share one
+ * result. Without it every navigation ran this twice — two auth round trips
+ * and eight redundant queries per screen.
  */
-export async function requireContext(): Promise<SessionContext> {
+export const requireContext = cache(async function requireContext(): Promise<SessionContext> {
   const supabase = await createClient();
 
   const {
@@ -89,7 +113,7 @@ export async function requireContext(): Promise<SessionContext> {
 
   if (!profile.household_id) redirect("/onboarding");
 
-  const [householdRes, membersRes, categoriesRes, methodsRes] = await Promise.all([
+  const [householdRes, membersRes, categoriesRes, methodsRes, fixedRes] = await Promise.all([
     supabase.from("households").select("*").eq("id", profile.household_id).single<Household>(),
     supabase
       .from("profiles")
@@ -110,6 +134,13 @@ export async function requireContext(): Promise<SessionContext> {
       .eq("archived", false)
       .order("sort_order")
       .order("name"),
+    supabase
+      .from("fixed_expenses")
+      .select("*")
+      .eq("household_id", profile.household_id)
+      .eq("archived", false)
+      .order("use_count", { ascending: false })
+      .order("sort_order"),
   ]);
 
   if (!householdRes.data) redirect("/onboarding");
@@ -123,8 +154,11 @@ export async function requireContext(): Promise<SessionContext> {
     partner: members.find((m) => m.id !== profile.id) ?? null,
     categories: (categoriesRes.data ?? []) as Category[],
     paymentMethods: (methodsRes.data ?? []) as PaymentMethod[],
+    // Tolerate a missing table so the app still runs before the fixed-expenses
+    // migration has been applied.
+    fixedExpenses: (fixedRes.data ?? []) as FixedExpense[],
   };
-}
+});
 
 /** The cycle currently being viewed, from `?cycle=yyyy-MM-dd` or today. */
 export function resolveCycle(household: Household, cycleKey?: string): Cycle {
@@ -238,6 +272,20 @@ export async function getSavingsContributions(
 
   const { data } = await query;
   return (data ?? []) as SavingsContribution[];
+}
+
+/** Fixed expenses, most-used first so the quick-add rail stays useful. */
+export async function getFixedExpenses(householdId: string): Promise<FixedExpense[]> {
+  const supabase = await createClient();
+  const { data } = await supabase
+    .from("fixed_expenses")
+    .select("*")
+    .eq("household_id", householdId)
+    .eq("archived", false)
+    .order("sort_order")
+    .order("use_count", { ascending: false })
+    .order("name");
+  return (data ?? []) as FixedExpense[];
 }
 
 export async function getSavingsGoals(householdId: string): Promise<SavingsGoal[]> {

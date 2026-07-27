@@ -5,7 +5,7 @@ import { createContext, useContext, useMemo, useState } from "react";
 import { AddTransactionSheet } from "@/components/AddTransactionSheet";
 import { BottomNav } from "@/components/BottomNav";
 import { RealtimeSync } from "@/components/RealtimeSync";
-import type { Category, Household, PaymentMethod, Profile } from "@/lib/types";
+import type { Category, FixedExpense, Household, PaymentMethod, Profile } from "@/lib/types";
 
 type ShellValue = { openAdd: () => void };
 
@@ -22,6 +22,7 @@ export function AppShell({
   members,
   categories,
   paymentMethods,
+  fixedExpenses,
   children,
 }: {
   profile: Profile;
@@ -29,6 +30,7 @@ export function AppShell({
   members: Profile[];
   categories: Category[];
   paymentMethods: PaymentMethod[];
+  fixedExpenses: FixedExpense[];
   children: React.ReactNode;
 }) {
   const [addOpen, setAddOpen] = useState(false);
@@ -51,6 +53,7 @@ export function AppShell({
         members={members}
         categories={categories}
         paymentMethods={paymentMethods}
+        fixedExpenses={fixedExpenses}
         currency={household.currency}
       />
     </ShellContext.Provider>

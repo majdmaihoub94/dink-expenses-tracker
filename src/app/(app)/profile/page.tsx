@@ -5,7 +5,8 @@ import { requireContext } from "@/lib/data";
 export const dynamic = "force-dynamic";
 
 export default async function ProfilePage() {
-  const { profile, household, members, categories, paymentMethods } = await requireContext();
+  const { profile, household, members, categories, paymentMethods, fixedExpenses } =
+    await requireContext();
 
   return (
     <div className="space-y-4">
@@ -21,6 +22,7 @@ export default async function ProfilePage() {
         members={members}
         categories={categories}
         paymentMethods={paymentMethods}
+        fixedExpenses={fixedExpenses}
       />
     </div>
   );

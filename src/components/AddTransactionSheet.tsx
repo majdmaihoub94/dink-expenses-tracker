@@ -3,10 +3,10 @@
 import { useActionState, useEffect, useMemo, useState } from "react";
 import { useFormStatus } from "react-dom";
 
-import { addTransactionAction, type ActionResult } from "@/app/actions";
+import { addTransactionAction, logFixedExpenseAction, type ActionResult } from "@/app/actions";
 import { Sheet } from "@/components/Sheet";
-import { currencySymbol } from "@/lib/format";
-import type { Category, PaymentMethod, Profile, TxnKind } from "@/lib/types";
+import { currencySymbol, money } from "@/lib/format";
+import type { Category, FixedExpense, PaymentMethod, Profile, TxnKind } from "@/lib/types";
 
 const today = () => new Date().toISOString().slice(0, 10);
 
@@ -17,6 +17,7 @@ export function AddTransactionSheet({
   members,
   categories,
   paymentMethods,
+  fixedExpenses,
   currency,
 }: {
   open: boolean;
@@ -25,6 +26,7 @@ export function AddTransactionSheet({
   members: Profile[];
   categories: Category[];
   paymentMethods: PaymentMethod[];
+  fixedExpenses: FixedExpense[];
   currency: string;
 }) {
   const [kind, setKind] = useState<TxnKind>("expense");
@@ -38,6 +40,9 @@ export function AddTransactionSheet({
   const [isShared, setIsShared] = useState(true);
   const [showMore, setShowMore] = useState(false);
   const [occurredOn, setOccurredOn] = useState(today);
+  const [saveAsFixed, setSaveAsFixed] = useState(false);
+  const [merchant, setMerchant] = useState("");
+  const [quickPending, setQuickPending] = useState<string | null>(null);
 
   const [state, formAction] = useActionState(
     async (_prev: ActionResult | null, formData: FormData) => {
@@ -64,6 +69,9 @@ export function AddTransactionSheet({
     setIsShared(true);
     setShowMore(false);
     setOccurredOn(today());
+    setSaveAsFixed(false);
+    setMerchant("");
+    setQuickPending(null);
     setPaymentMethodId(
       profile.default_payment_method_id ?? paymentMethods.find((m) => m.is_default)?.id ?? "",
     );
@@ -76,8 +84,45 @@ export function AddTransactionSheet({
 
   return (
     <Sheet open={open} onClose={onClose} title={kind === "expense" ? "New expense" : "New income"}>
+      {/* Quick add — one tap logs a saved fixed expense and closes. --------- */}
+      {kind === "expense" && fixedExpenses.length > 0 && (
+        <div className="mb-5">
+          <span className="dinx-label">Quick add</span>
+          <div className="dinx-rail">
+            {fixedExpenses.map((fixed) => (
+              <button
+                key={fixed.id}
+                type="button"
+                disabled={quickPending !== null}
+                onClick={async () => {
+                  setQuickPending(fixed.id);
+                  const data = new FormData();
+                  data.set("id", fixed.id);
+                  data.set("paid_by", paidBy);
+                  const result = await logFixedExpenseAction(data);
+                  setQuickPending(null);
+                  if (result.ok) onClose();
+                }}
+                className="dinx-tap flex shrink-0 items-center gap-2 rounded-2xl border border-line bg-card px-3 py-2.5 text-left disabled:opacity-50"
+              >
+                <span className="text-lg" aria-hidden>
+                  {quickPending === fixed.id ? "⏳" : fixed.emoji}
+                </span>
+                <span>
+                  <span className="block text-sm font-semibold text-ink">{fixed.name}</span>
+                  <span className="block text-xs text-muted">
+                    {money(Number(fixed.amount), currency)}
+                  </span>
+                </span>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
       <form action={formAction} className="space-y-5 pb-2">
         <input type="hidden" name="kind" value={kind} />
+        <input type="hidden" name="save_as_fixed" value={saveAsFixed ? "true" : "false"} />
         <input type="hidden" name="category_id" value={categoryId} />
         <input type="hidden" name="payment_method_id" value={paymentMethodId} />
         <input type="hidden" name="paid_by" value={paidBy} />
@@ -245,10 +290,39 @@ export function AddTransactionSheet({
             name="merchant"
             type="text"
             autoComplete="off"
+            value={merchant}
+            onChange={(e) => setMerchant(e.target.value)}
             placeholder={kind === "expense" ? "Nike Store" : "Monthly salary"}
             className="dinx-field"
           />
         </div>
+
+        {/* Save as fixed — needs a name to key the shortcut on. ------------- */}
+        {kind === "expense" && (
+          <label
+            className={`flex items-center justify-between gap-3 rounded-2xl px-4 py-3 transition-colors ${
+              saveAsFixed ? "bg-plum-50" : "bg-page"
+            } ${merchant.trim() ? "" : "opacity-50"}`}
+          >
+            <span className="min-w-0">
+              <span className="block text-sm font-medium text-ink">📌 Save as fixed</span>
+              <span className="block text-xs text-muted">
+                {merchant.trim()
+                  ? `Adds "${merchant.trim()}" to Quick add for next time`
+                  : "Name it above to save as a shortcut"}
+              </span>
+            </span>
+            <input
+              type="checkbox"
+              checked={saveAsFixed}
+              disabled={!merchant.trim()}
+              onChange={(e) => setSaveAsFixed(e.target.checked)}
+              className="relative h-6 w-11 shrink-0 appearance-none rounded-full bg-line transition-colors checked:bg-plum-500
+                         before:absolute before:top-0.5 before:left-0.5 before:h-5 before:w-5 before:rounded-full
+                         before:bg-white before:transition-transform checked:before:translate-x-5"
+            />
+          </label>
+        )}
 
         {/* Optional extras -------------------------------------------------- */}
         <button

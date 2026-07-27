@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useLinkStatus } from "next/link";
 import { usePathname } from "next/navigation";
 
 const ITEMS = [
@@ -63,14 +64,38 @@ function NavItem({
   return (
     <Link
       href={href}
+      prefetch
       aria-current={active ? "page" : undefined}
       className={`flex min-w-[64px] flex-1 flex-col items-center gap-1 rounded-2xl px-2 py-2 transition-colors ${
         active ? "text-plum-600" : "text-muted"
       }`}
     >
-      <Icon className="h-[22px] w-[22px]" />
+      <NavIcon Icon={Icon} active={active} />
       <span className="text-[10px] font-medium">{label}</span>
     </Link>
+  );
+}
+
+/**
+ * Lights the tab up the instant it is tapped rather than when the server
+ * replies. `useLinkStatus` only works inside a Link, hence the split.
+ */
+function NavIcon({
+  Icon,
+  active,
+}: {
+  Icon: (props: { className?: string }) => React.ReactElement;
+  active: boolean;
+}) {
+  const { pending } = useLinkStatus();
+
+  return (
+    <span className={`relative ${pending && !active ? "text-plum-600" : ""}`}>
+      <Icon className="h-[22px] w-[22px]" />
+      {pending && (
+        <span className="absolute -right-1.5 -bottom-0.5 h-1.5 w-1.5 animate-ping rounded-full bg-plum-500" />
+      )}
+    </span>
   );
 }
 

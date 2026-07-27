@@ -182,6 +182,29 @@ create table if not exists planned_payments (
 
 create index if not exists planned_payments_cycle_idx on planned_payments (household_id, cycle_start);
 
+-- Reusable one-tap expense templates. Distinct from planned_expenses: those
+-- are bills you tick off once per cycle, these are shortcuts you can log any
+-- number of times, whenever you like.
+create table if not exists fixed_expenses (
+  id                uuid primary key default gen_random_uuid(),
+  household_id      uuid not null references households on delete cascade,
+  name              text not null,
+  amount            numeric(12, 2) not null check (amount >= 0),
+  category_id       uuid references categories on delete set null,
+  payment_method_id uuid references payment_methods on delete set null,
+  emoji             text not null default '⚡',
+  -- Ordering hints, so the ones you actually use float to the front.
+  use_count         int not null default 0,
+  last_used_at      timestamptz,
+  sort_order        int not null default 0,
+  archived          boolean not null default false,
+  created_at        timestamptz not null default now(),
+  unique (household_id, name)
+);
+
+create index if not exists fixed_expenses_household_idx
+  on fixed_expenses (household_id) where archived = false;
+
 -- ----------------------------------------------------------------------------
 -- Savings
 -- ----------------------------------------------------------------------------
@@ -392,6 +415,7 @@ alter table payment_methods       enable row level security;
 alter table transactions          enable row level security;
 alter table planned_expenses      enable row level security;
 alter table planned_payments      enable row level security;
+alter table fixed_expenses        enable row level security;
 alter table savings_goals         enable row level security;
 alter table savings_contributions enable row level security;
 alter table activity_events       enable row level security;
@@ -419,7 +443,8 @@ declare t text;
 begin
   foreach t in array array[
     'categories', 'payment_methods', 'transactions', 'planned_expenses',
-    'planned_payments', 'savings_goals', 'savings_contributions', 'activity_events'
+    'planned_payments', 'fixed_expenses', 'savings_goals',
+    'savings_contributions', 'activity_events'
   ] loop
     execute format('drop policy if exists %I_rw on %I', t, t);
     execute format(
@@ -432,6 +457,43 @@ end $$;
 drop policy if exists push_subscriptions_rw on push_subscriptions;
 create policy push_subscriptions_rw on push_subscriptions
   for all using (profile_id = auth.uid()) with check (profile_id = auth.uid());
+
+-- ----------------------------------------------------------------------------
+-- Grants
+--
+-- Supabase ships default privileges that expose new public tables to the API
+-- roles, but they only fire for tables created by the `postgres` role. Run the
+-- schema as anything else and every request fails with "permission denied for
+-- table". Granting explicitly makes this work whoever applies it.
+--
+-- These are table-level privileges only. The RLS policies above still decide
+-- which rows each person can actually touch.
+-- ----------------------------------------------------------------------------
+grant usage on schema public to anon, authenticated;
+
+grant select, insert, update, delete on
+  households,
+  profiles,
+  categories,
+  payment_methods,
+  transactions,
+  planned_expenses,
+  planned_payments,
+  fixed_expenses,
+  savings_goals,
+  savings_contributions,
+  activity_events,
+  push_subscriptions
+to authenticated;
+
+grant execute on function current_household_id() to authenticated;
+grant execute on function is_my_household(uuid) to authenticated;
+grant execute on function create_household(text) to authenticated;
+grant execute on function join_household(text) to authenticated;
+
+-- Anything added to this schema later inherits the same access.
+alter default privileges in schema public
+  grant select, insert, update, delete on tables to authenticated;
 
 -- ----------------------------------------------------------------------------
 -- Realtime — drives the live badge when your partner logs something.

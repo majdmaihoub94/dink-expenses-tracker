@@ -17,6 +17,14 @@ export function RealtimeSync({ householdId, profileId }: { householdId: string; 
   useEffect(() => {
     const supabase = createClient();
 
+    // A single save can emit several events. Collapse a burst into one refresh
+    // so the app does not re-render repeatedly while your partner is typing.
+    let refreshTimer: ReturnType<typeof setTimeout>;
+    const scheduleRefresh = () => {
+      clearTimeout(refreshTimer);
+      refreshTimer = setTimeout(() => router.refresh(), 250);
+    };
+
     const channel = supabase
       .channel(`household:${householdId}`)
       .on(
@@ -42,17 +50,24 @@ export function RealtimeSync({ householdId, profileId }: { householdId: string; 
               member_joined: "Someone joined your household",
             }[event.type] ?? "Household updated",
           );
-          router.refresh();
+          scheduleRefresh();
         },
       )
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "transactions", filter: `household_id=eq.${householdId}` },
-        () => router.refresh(),
+        (payload) => {
+          // Our own writes already refreshed via revalidatePath in the server
+          // action. Refreshing again here doubled the work on every save.
+          const row = payload.new as { created_by?: string } | null;
+          if (payload.eventType === "INSERT" && row?.created_by === profileId) return;
+          scheduleRefresh();
+        },
       )
       .subscribe();
 
     return () => {
+      clearTimeout(refreshTimer);
       supabase.removeChannel(channel);
     };
   }, [householdId, profileId, router]);
