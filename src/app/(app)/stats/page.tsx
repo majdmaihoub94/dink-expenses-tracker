@@ -27,20 +27,31 @@ export default async function StatsPage({
   const previousCycle = shiftCycle(cycle, -1, household.cycle_label_mode);
   const trendCycles = recentCycles(cycle, 6, household.cycle_label_mode);
 
-  const [transactions, previousTransactions, contributions, previousContributions, allContributions, goals, planned, trend] =
+  const [transactions, previousTransactions, allContributions, goals, planned, trend] =
     await Promise.all([
       getTransactions(household.id, cycle),
       getTransactions(household.id, previousCycle),
-      getSavingsContributions(household.id, cycle),
-      getSavingsContributions(household.id, previousCycle),
+      // One fetch of the full history covers this cycle, the previous one and
+      // the six-cycle chart below — it used to be three separate queries.
       getSavingsContributions(household.id),
       getSavingsGoals(household.id),
       getPlanned(household.id, cycle),
       getCycleTrend(household.id, trendCycles),
     ]);
 
-  const totals = totalsFor(transactions, contributions);
-  const previousTotals = totalsFor(previousTransactions, previousContributions);
+  const inCycle = (c: { occurred_on: string }, target: typeof cycle) => {
+    const { from, to } = cycleBounds(target);
+    return c.occurred_on >= from && c.occurred_on <= to;
+  };
+
+  const totals = totalsFor(
+    transactions,
+    allContributions.filter((c) => inCycle(c, cycle)),
+  );
+  const previousTotals = totalsFor(
+    previousTransactions,
+    allContributions.filter((c) => inCycle(c, previousCycle)),
+  );
 
   // Running total per goal, across every cycle — goals are long-lived.
   const goalProgress = new Map<string, number>();

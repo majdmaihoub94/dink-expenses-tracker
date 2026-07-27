@@ -1,3 +1,4 @@
+import { cache } from "react";
 import { redirect } from "next/navigation";
 
 import { cycleBounds, cycleFor, type Cycle } from "@/lib/cycle";
@@ -81,8 +82,12 @@ function describeDbError(error: { message: string; code?: string } | null): stri
 /**
  * Loads the session context, redirecting to login/onboarding when the user
  * is not ready to see the app yet.
+ *
+ * Wrapped in React's `cache` so the layout and the page it renders share one
+ * result. Without it every navigation ran this twice — two auth round trips
+ * and eight redundant queries per screen.
  */
-export async function requireContext(): Promise<SessionContext> {
+export const requireContext = cache(async function requireContext(): Promise<SessionContext> {
   const supabase = await createClient();
 
   const {
@@ -140,7 +145,7 @@ export async function requireContext(): Promise<SessionContext> {
     categories: (categoriesRes.data ?? []) as Category[],
     paymentMethods: (methodsRes.data ?? []) as PaymentMethod[],
   };
-}
+});
 
 /** The cycle currently being viewed, from `?cycle=yyyy-MM-dd` or today. */
 export function resolveCycle(household: Household, cycleKey?: string): Cycle {

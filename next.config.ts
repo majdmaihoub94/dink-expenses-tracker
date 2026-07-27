@@ -5,6 +5,16 @@ const nextConfig: NextConfig = {
   // the files the server actually needs.
   output: "standalone",
   reactStrictMode: true,
+  experimental: {
+    staleTimes: {
+      // Keep visited screens in the client router cache so tab switching and
+      // back-navigation render instantly instead of refetching every time.
+      // Writes call revalidatePath, which clears this, so the numbers still
+      // update the moment either of you logs something.
+      dynamic: 30,
+      static: 180,
+    },
+  },
   async headers() {
     return [
       {
