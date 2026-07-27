@@ -44,7 +44,10 @@ export async function middleware(request: NextRequest) {
     return NextResponse.redirect(url);
   }
 
-  if (user && pathname === "/login") {
+  // Send signed-in users away from the login screen — unless we put them there
+  // to show an error. Bouncing those back would hide the message, and if the
+  // page that redirected here does so again, loop the browser indefinitely.
+  if (user && pathname === "/login" && !request.nextUrl.searchParams.has("error")) {
     const url = request.nextUrl.clone();
     url.pathname = "/";
     url.search = "";

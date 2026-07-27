@@ -30,6 +30,38 @@ const TXN_SELECT = `
   payment_method:payment_methods (id, name, color, type)
 `;
 
+type AuthUser = { id: string; email?: string; user_metadata?: Record<string, unknown> };
+
+/**
+ * Backfills the `profiles` row for an account that predates the schema
+ * trigger. Throws rather than redirecting: a failure here means the schema
+ * has not been applied, and a redirect would only spin.
+ */
+async function createMissingProfile(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  user: AuthUser,
+): Promise<Profile> {
+  const displayName =
+    (typeof user.user_metadata?.display_name === "string" && user.user_metadata.display_name) ||
+    user.email?.split("@")[0] ||
+    "Me";
+
+  const { data, error } = await supabase
+    .from("profiles")
+    .upsert({ id: user.id, display_name: displayName }, { onConflict: "id" })
+    .select("*")
+    .single<Profile>();
+
+  if (error || !data) {
+    throw new Error(
+      `Could not create your DINX profile: ${error?.message ?? "unknown error"}. ` +
+        "This usually means supabase/schema.sql has not been run against this project.",
+    );
+  }
+
+  return data;
+}
+
 /**
  * Loads the session context, redirecting to login/onboarding when the user
  * is not ready to see the app yet.
@@ -42,13 +74,19 @@ export async function requireContext(): Promise<SessionContext> {
   } = await supabase.auth.getUser();
   if (!user) redirect("/login");
 
-  const { data: profile } = await supabase
+  const { data: existing } = await supabase
     .from("profiles")
     .select("*")
     .eq("id", user.id)
-    .single<Profile>();
+    .maybeSingle<Profile>();
 
-  if (!profile) redirect("/login");
+  // An account can exist in auth.users with no profile row — most commonly
+  // when it was created before schema.sql (and its on_auth_user_created
+  // trigger) was applied. Redirecting to /login here would loop forever,
+  // because the middleware sends signed-in users straight back. Heal it by
+  // creating the row the trigger would have made.
+  const profile = existing ?? (await createMissingProfile(supabase, user));
+
   if (!profile.household_id) redirect("/onboarding");
 
   const [householdRes, membersRes, categoriesRes, methodsRes] = await Promise.all([
