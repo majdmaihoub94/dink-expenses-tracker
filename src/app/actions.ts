@@ -7,7 +7,7 @@ import { cycleBounds, cycleFor } from "@/lib/cycle";
 import { money } from "@/lib/format";
 import { notifyHousehold } from "@/lib/push";
 import { createClient } from "@/lib/supabase/server";
-import type { Household, Profile } from "@/lib/types";
+import type { Household, Profile, TxnKind } from "@/lib/types";
 
 export type ActionResult = { ok: true } | { ok: false; error: string };
 
@@ -475,6 +475,68 @@ export async function undoPlannedPaidAction(formData: FormData): Promise<void> {
   }
 
   refreshAll();
+}
+
+// ---------------------------------------------------------------------------
+// Statement import
+// ---------------------------------------------------------------------------
+
+export type ImportRow = {
+  date: string;
+  description: string;
+  amount: number;
+  kind: TxnKind;
+  categoryId: string | null;
+};
+
+/**
+ * Saves the rows a person ticked on the review screen. Separate from parsing
+ * on purpose: the upload endpoint only ever proposes, this is what writes.
+ */
+export async function importTransactionsAction(
+  rows: ImportRow[],
+  options: { paidBy?: string; paymentMethodId?: string | null },
+): Promise<ActionResult & { inserted?: number }> {
+  const { supabase, profile, householdId } = await requireActor();
+
+  if (!Array.isArray(rows) || rows.length === 0) return fail("Nothing selected.");
+  if (rows.length > 2000) return fail("Too many rows in one go.");
+
+  const paidBy = options.paidBy || profile.id;
+  const paymentMethodId = options.paymentMethodId || profile.default_payment_method_id;
+
+  const payload = rows
+    .filter((row) => row?.date && Number.isFinite(row.amount) && row.amount > 0)
+    .map((row) => ({
+      household_id: householdId,
+      kind: row.kind === "income" ? "income" : "expense",
+      amount: Math.round(row.amount * 100) / 100,
+      income_kind: row.kind === "income" ? "other" : null,
+      category_id: row.categoryId || null,
+      payment_method_id: paymentMethodId,
+      paid_by: paidBy,
+      created_by: profile.id,
+      merchant: row.description?.slice(0, 120) || "Imported",
+      note: "Imported from statement",
+      occurred_on: row.date,
+      is_shared: row.kind !== "income",
+      split_percent: 50,
+    }));
+
+  if (payload.length === 0) return fail("Nothing valid to import.");
+
+  const { error } = await supabase.from("transactions").insert(payload);
+  if (error) return fail(error.message);
+
+  await supabase.from("activity_events").insert({
+    household_id: householdId,
+    type: "expense_added",
+    actor_id: profile.id,
+    payload: { label: `${payload.length} imported transactions`, imported: payload.length },
+  });
+
+  refreshAll();
+  return { ok: true, inserted: payload.length };
 }
 
 // ---------------------------------------------------------------------------
