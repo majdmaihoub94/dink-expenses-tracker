@@ -45,6 +45,48 @@ export type NotifyResult = {
   failed: number;
 };
 
+/** Sends to every stored subscription for the given profiles; tallies outcomes. */
+async function sendToProfiles(
+  admin: ReturnType<typeof createAdminClient>,
+  profileIds: string[],
+  payload: PushPayload,
+): Promise<Pick<NotifyResult, "subscriptions" | "sent" | "failed">> {
+  const { data: subs } = await admin.from("push_subscriptions").select("*").in("profile_id", profileIds);
+
+  if (!subs?.length) return { subscriptions: 0, sent: 0, failed: 0 };
+
+  const body = JSON.stringify(payload);
+  let sent = 0;
+  let failed = 0;
+
+  await Promise.all(
+    subs.map(async (sub) => {
+      try {
+        await webpush.sendNotification(
+          {
+            endpoint: sub.endpoint as string,
+            keys: { p256dh: sub.p256dh as string, auth: sub.auth as string },
+          },
+          body,
+        );
+        sent += 1;
+      } catch (error) {
+        const status = (error as { statusCode?: number }).statusCode;
+        // 404/410 mean the browser dropped the subscription — clean it up so
+        // we stop retrying a dead endpoint on every future event.
+        if (status === 404 || status === 410) {
+          await admin.from("push_subscriptions").delete().eq("id", sub.id as string);
+        } else {
+          console.error("[push] send failed", status, error);
+        }
+        failed += 1;
+      }
+    }),
+  );
+
+  return { subscriptions: subs.length, sent, failed };
+}
+
 /**
  * Pushes to everyone in the household except the person who caused the event,
  * respecting each recipient's own notification preference.
@@ -86,53 +128,44 @@ export async function notifyHousehold({
       return { reason: "no_recipients", recipients: 0, subscriptions: 0, sent: 0, failed: 0 };
     }
 
-    const { data: subs } = await admin
-      .from("push_subscriptions")
-      .select("*")
-      .in("profile_id", targetIds);
-
-    if (!subs?.length) {
-      return {
-        reason: "no_subscriptions",
-        recipients: targetIds.length,
-        subscriptions: 0,
-        sent: 0,
-        failed: 0,
-      };
+    const outcome = await sendToProfiles(admin, targetIds, payload);
+    if (outcome.subscriptions === 0) {
+      return { reason: "no_subscriptions", recipients: targetIds.length, ...outcome };
     }
 
-    const body = JSON.stringify(payload);
-    let sent = 0;
-    let failed = 0;
-
-    await Promise.all(
-      subs.map(async (sub) => {
-        try {
-          await webpush.sendNotification(
-            {
-              endpoint: sub.endpoint as string,
-              keys: { p256dh: sub.p256dh as string, auth: sub.auth as string },
-            },
-            body,
-          );
-          sent += 1;
-        } catch (error) {
-          const status = (error as { statusCode?: number }).statusCode;
-          // 404/410 mean the browser dropped the subscription — clean it up so
-          // we stop retrying a dead endpoint on every future event.
-          if (status === 404 || status === 410) {
-            await admin.from("push_subscriptions").delete().eq("id", sub.id as string);
-          } else {
-            console.error("[push] send failed", status, error);
-          }
-          failed += 1;
-        }
-      }),
-    );
-
-    return { recipients: targetIds.length, subscriptions: subs.length, sent, failed };
+    return { recipients: targetIds.length, ...outcome };
   } catch (error) {
     console.error("[push] notifyHousehold failed", error);
     return { recipients: 0, subscriptions: 0, sent: 0, failed: 0 };
+  }
+}
+
+/**
+ * Pushes only to the caller's own subscribed devices — used by the "Send
+ * test" button so a person can confirm delivery to their own phone without
+ * needing a partner's device to check.
+ */
+export async function notifySelf({
+  profileId,
+  payload,
+}: {
+  profileId: string;
+  payload: PushPayload;
+}): Promise<NotifyResult> {
+  if (!ensureConfigured()) {
+    return { reason: "unconfigured", recipients: 0, subscriptions: 0, sent: 0, failed: 0 };
+  }
+
+  try {
+    const admin = createAdminClient();
+    const outcome = await sendToProfiles(admin, [profileId], payload);
+    return {
+      reason: outcome.subscriptions === 0 ? "no_subscriptions" : undefined,
+      recipients: 1,
+      ...outcome,
+    };
+  } catch (error) {
+    console.error("[push] notifySelf failed", error);
+    return { recipients: 1, subscriptions: 0, sent: 0, failed: 0 };
   }
 }
