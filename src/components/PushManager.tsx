@@ -82,7 +82,11 @@ export function PushManager({ vapidPublicKey }: { vapidPublicKey?: string }) {
     setTesting(true);
     setTestResult(null);
     try {
-      const response = await fetch("/api/push/test", { method: "POST" });
+      const response = await fetch("/api/push/test", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ target: "self" }),
+      });
       const data = (await response.json().catch(() => ({}))) as { message?: string; error?: string };
       setTestResult(data.message ?? data.error ?? "Something went wrong sending the test.");
     } catch {
@@ -107,7 +111,7 @@ export function PushManager({ vapidPublicKey }: { vapidPublicKey?: string }) {
           <div className="min-w-0 flex-1">
             <p className="text-sm font-semibold text-ink">Alerts are on</p>
             <p className="text-xs text-ink-soft">
-              {testResult ?? "Send a test to make sure it pops up on your partner's device."}
+              {testResult ?? "Tap to get a real notification on this device right now."}
             </p>
           </div>
           <button
