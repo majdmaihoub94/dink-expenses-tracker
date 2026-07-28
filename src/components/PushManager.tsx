@@ -21,6 +21,42 @@ export function PushManager({ vapidPublicKey }: { vapidPublicKey?: string }) {
   const [testResult, setTestResult] = useState<string | null>(null);
   const [testing, setTesting] = useState(false);
 
+  const postSubscription = useCallback(async (subscription: PushSubscription) => {
+    const response = await fetch("/api/push/subscribe", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        subscription: subscription.toJSON(),
+        userAgent: navigator.userAgent,
+      }),
+    });
+    if (!response.ok) throw new Error("Could not save the subscription");
+  }, []);
+
+  // Reuses an existing browser subscription if there is one, or creates a
+  // fresh one. Either way it re-POSTs to the server, because permission
+  // being "granted" (an origin-level browser setting that survives deleting
+  // and reinstalling the PWA) does not mean a subscription row still exists
+  // server-side — that's exactly what caused "no subscription found".
+  const syncSubscription = useCallback(async () => {
+    if (!vapidPublicKey) return false;
+    try {
+      const registration = await navigator.serviceWorker.ready;
+      const existing = await registration.pushManager.getSubscription();
+      const subscription =
+        existing ??
+        (await registration.pushManager.subscribe({
+          userVisibleOnly: true,
+          applicationServerKey: urlBase64ToUint8Array(vapidPublicKey) as BufferSource,
+        }));
+      await postSubscription(subscription);
+      return true;
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Something went wrong");
+      return false;
+    }
+  }, [vapidPublicKey, postSubscription]);
+
   useEffect(() => {
     if (typeof window === "undefined") return;
 
@@ -33,11 +69,24 @@ export function PushManager({ vapidPublicKey }: { vapidPublicKey?: string }) {
       return;
     }
 
+    let cancelled = false;
     navigator.serviceWorker
       .register("/sw.js")
-      .then(() => setState(Notification.permission as State))
+      .then(async () => {
+        if (cancelled) return;
+        if (Notification.permission === "granted") {
+          const ok = await syncSubscription();
+          if (!cancelled) setState(ok ? "granted" : "default");
+        } else {
+          setState(Notification.permission as State);
+        }
+      })
       .catch(() => setState("unsupported"));
-  }, [vapidPublicKey]);
+
+    return () => {
+      cancelled = true;
+    };
+  }, [vapidPublicKey, syncSubscription]);
 
   const enable = useCallback(async () => {
     if (!vapidPublicKey) return;
@@ -53,30 +102,21 @@ export function PushManager({ vapidPublicKey }: { vapidPublicKey?: string }) {
 
       const registration = await navigator.serviceWorker.ready;
       const existing = await registration.pushManager.getSubscription();
-      // A key rotation invalidates old subscriptions, so always re-subscribe.
+      // A key rotation invalidates old subscriptions, so always re-subscribe
+      // on an explicit manual enable.
       if (existing) await existing.unsubscribe();
 
       const subscription = await registration.pushManager.subscribe({
         userVisibleOnly: true,
         applicationServerKey: urlBase64ToUint8Array(vapidPublicKey) as BufferSource,
       });
-
-      const response = await fetch("/api/push/subscribe", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          subscription: subscription.toJSON(),
-          userAgent: navigator.userAgent,
-        }),
-      });
-
-      if (!response.ok) throw new Error("Could not save the subscription");
+      await postSubscription(subscription);
       setState("granted");
     } catch (e) {
       setError(e instanceof Error ? e.message : "Something went wrong");
       setState("default");
     }
-  }, [vapidPublicKey]);
+  }, [vapidPublicKey, postSubscription]);
 
   const sendTest = useCallback(async () => {
     setTesting(true);
