@@ -26,6 +26,8 @@ export type SessionContext = {
   paymentMethods: PaymentMethod[];
   /** One-tap shortcuts, surfaced on the add sheet from every screen. */
   fixedExpenses: FixedExpense[];
+  /** Active goals, surfaced on the add sheet so a deposit can be logged there. */
+  savingsGoals: SavingsGoal[];
 };
 
 const TXN_SELECT = `
@@ -113,7 +115,7 @@ export const requireContext = cache(async function requireContext(): Promise<Ses
 
   if (!profile.household_id) redirect("/onboarding");
 
-  const [householdRes, membersRes, categoriesRes, methodsRes, fixedRes] = await Promise.all([
+  const [householdRes, membersRes, categoriesRes, methodsRes, fixedRes, goalsRes] = await Promise.all([
     supabase.from("households").select("*").eq("id", profile.household_id).single<Household>(),
     supabase
       .from("profiles")
@@ -141,6 +143,12 @@ export const requireContext = cache(async function requireContext(): Promise<Ses
       .eq("archived", false)
       .order("use_count", { ascending: false })
       .order("sort_order"),
+    supabase
+      .from("savings_goals")
+      .select("*")
+      .eq("household_id", profile.household_id)
+      .eq("archived", false)
+      .order("created_at"),
   ]);
 
   if (!householdRes.data) redirect("/onboarding");
@@ -157,6 +165,7 @@ export const requireContext = cache(async function requireContext(): Promise<Ses
     // Tolerate a missing table so the app still runs before the fixed-expenses
     // migration has been applied.
     fixedExpenses: (fixedRes.data ?? []) as FixedExpense[],
+    savingsGoals: (goalsRes.data ?? []) as SavingsGoal[],
   };
 });
 
@@ -194,7 +203,10 @@ export type CycleTotals = {
   salary: number;
   extra: number;
   saved: number;
-  /** income − expense − saved. What is genuinely left. */
+  /**
+   * income − expense. Deliberately excludes `saved` — savings are tracked as
+   * their own isolated thing and never subtracted from what's "left".
+   */
   net: number;
   byCategory: Map<string, number>;
   byPerson: Map<string, { expense: number; income: number; saved: number }>;
@@ -250,7 +262,7 @@ export function totalsFor(
     person(c.paid_by).saved += amount;
   }
 
-  totals.net = totals.income - totals.expense - totals.saved;
+  totals.net = totals.income - totals.expense;
   return totals;
 }
 

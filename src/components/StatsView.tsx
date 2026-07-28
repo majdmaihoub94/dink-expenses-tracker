@@ -116,7 +116,8 @@ function SpendingTab({
   trend: { key: string; label: string; value: number }[];
   activeCycleKey: string;
 }) {
-  const net = incomeTotal - expenseTotal - savedTotal;
+  // Savings are tracked as their own isolated thing — never subtracted here.
+  const net = incomeTotal - expenseTotal;
 
   return (
     <div className="space-y-4">

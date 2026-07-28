@@ -3,13 +3,18 @@
 import { useActionState, useEffect, useMemo, useState } from "react";
 import { useFormStatus } from "react-dom";
 
-import { addTransactionAction, logFixedExpenseAction, type ActionResult } from "@/app/actions";
+import {
+  addSavingsContributionAction,
+  addTransactionAction,
+  logFixedExpenseAction,
+  type ActionResult,
+} from "@/app/actions";
 import { Sheet } from "@/components/Sheet";
 import {
   AccountRail,
   CategoryRail,
+  GoalRail,
   IncomeKindPicker,
-  KindToggle,
   PersonPicker,
   SPLIT_OPTIONS,
   Toggle,
@@ -22,9 +27,17 @@ import {
   type MerchantSuggestion,
   type SuggestionIndex,
 } from "@/lib/suggestions";
-import type { Category, FixedExpense, PaymentMethod, Profile, TxnKind } from "@/lib/types";
+import type { Category, FixedExpense, PaymentMethod, Profile, SavingsGoal } from "@/lib/types";
 
 const today = () => new Date().toISOString().slice(0, 10);
+
+/**
+ * A third option alongside the two real transaction kinds. Picking it routes
+ * the form to addSavingsContributionAction instead of addTransactionAction —
+ * savings stay their own isolated thing, never a transactions row, never in
+ * the expense/income totals.
+ */
+type AddKind = "expense" | "income" | "savings";
 
 export function AddTransactionSheet({
   open,
@@ -34,7 +47,10 @@ export function AddTransactionSheet({
   categories,
   paymentMethods,
   fixedExpenses,
+  savingsGoals,
   currency,
+  defaultShared,
+  defaultSplitPercent,
 }: {
   open: boolean;
   onClose: () => void;
@@ -43,19 +59,26 @@ export function AddTransactionSheet({
   categories: Category[];
   paymentMethods: PaymentMethod[];
   fixedExpenses: FixedExpense[];
+  savingsGoals: SavingsGoal[];
   currency: string;
+  /** Household defaults for the shared-cost toggle, so most personal spends don't need editing. */
+  defaultShared: boolean;
+  defaultSplitPercent: number;
 }) {
-  const [kind, setKind] = useState<TxnKind>("expense");
+  const [kind, setKind] = useState<AddKind>("expense");
   const [amount, setAmount] = useState("");
   const [categoryId, setCategoryId] = useState("");
+  const [goalId, setGoalId] = useState(savingsGoals[0]?.id ?? "");
   const [paymentMethodId, setPaymentMethodId] = useState(
     profile.default_payment_method_id ?? paymentMethods.find((m) => m.is_default)?.id ?? "",
   );
   const [paidBy, setPaidBy] = useState(profile.id);
   const [incomeKind, setIncomeKind] = useState("salary");
-  const [isShared, setIsShared] = useState(true);
+  const [isShared, setIsShared] = useState(defaultShared);
+  const [splitPercent, setSplitPercent] = useState(String(defaultSplitPercent));
   const [showMore, setShowMore] = useState(false);
   const [occurredOn, setOccurredOn] = useState(today);
+  const [note, setNote] = useState("");
   const [saveAsFixed, setSaveAsFixed] = useState(false);
   const [merchant, setMerchant] = useState("");
   const [quickPending, setQuickPending] = useState<string | null>(null);
@@ -65,7 +88,10 @@ export function AddTransactionSheet({
 
   const [state, formAction] = useActionState(
     async (_prev: ActionResult | null, formData: FormData) => {
-      const result = await addTransactionAction(formData);
+      const result =
+        kind === "savings"
+          ? await addSavingsContributionAction(formData)
+          : await addTransactionAction(formData);
       if (result.ok) onClose();
       return result;
     },
@@ -73,7 +99,7 @@ export function AddTransactionSheet({
   );
 
   const visibleCategories = useMemo(
-    () => categories.filter((c) => c.kind === kind),
+    () => (kind === "savings" ? [] : categories.filter((c) => c.kind === kind)),
     [categories, kind],
   );
 
@@ -83,11 +109,14 @@ export function AddTransactionSheet({
     setKind("expense");
     setAmount("");
     setCategoryId("");
+    setGoalId(savingsGoals[0]?.id ?? "");
     setPaidBy(profile.id);
     setIncomeKind("salary");
-    setIsShared(true);
+    setIsShared(defaultShared);
+    setSplitPercent(String(defaultSplitPercent));
     setShowMore(false);
     setOccurredOn(today());
+    setNote("");
     setSaveAsFixed(false);
     setMerchant("");
     setQuickPending(null);
@@ -96,7 +125,15 @@ export function AddTransactionSheet({
     setPaymentMethodId(
       profile.default_payment_method_id ?? paymentMethods.find((m) => m.is_default)?.id ?? "",
     );
-  }, [open, profile.id, profile.default_payment_method_id, paymentMethods]);
+  }, [
+    open,
+    profile.id,
+    profile.default_payment_method_id,
+    paymentMethods,
+    savingsGoals,
+    defaultShared,
+    defaultSplitPercent,
+  ]);
 
   // The category rail is filtered by kind, so a stale pick must be dropped.
   useEffect(() => {
@@ -150,8 +187,11 @@ export function AddTransactionSheet({
     }
   };
 
+  const title =
+    kind === "expense" ? "New expense" : kind === "income" ? "New income" : "Add to savings";
+
   return (
-    <Sheet open={open} onClose={onClose} title={kind === "expense" ? "New expense" : "New income"}>
+    <Sheet open={open} onClose={onClose} title={title}>
       {/* Quick add — one tap logs a saved fixed expense and closes. --------- */}
       {kind === "expense" && fixedExpenses.length > 0 && (
         <div className="mb-5">
@@ -189,16 +229,40 @@ export function AddTransactionSheet({
       )}
 
       <form action={formAction} className="space-y-5 pb-2">
-        <input type="hidden" name="kind" value={kind} />
+        {/* Only read by addTransactionAction; harmless extra field otherwise. */}
+        <input type="hidden" name="kind" value={kind === "savings" ? "expense" : kind} />
         <input type="hidden" name="save_as_fixed" value={saveAsFixed ? "true" : "false"} />
         <input type="hidden" name="category_id" value={categoryId} />
         <input type="hidden" name="payment_method_id" value={paymentMethodId} />
         <input type="hidden" name="paid_by" value={paidBy} />
         <input type="hidden" name="income_kind" value={incomeKind} />
         <input type="hidden" name="is_shared" value={isShared ? "true" : "false"} />
+        <input type="hidden" name="split_percent" value={splitPercent} />
+        {kind === "savings" && <input type="hidden" name="goal_id" value={goalId} />}
+        {kind === "savings" && <input type="hidden" name="occurred_on" value={occurredOn} />}
+        {kind === "savings" && <input type="hidden" name="note" value={note} />}
 
-        {/* Expense / income ------------------------------------------------ */}
-        <KindToggle value={kind} onChange={setKind} />
+        {/* Expense / income / savings --------------------------------------- */}
+        <div className="flex rounded-full bg-page p-1">
+          {(
+            [
+              { value: "expense", label: "Expense" },
+              { value: "income", label: "Income" },
+              { value: "savings", label: "Savings" },
+            ] as const
+          ).map((option) => (
+            <button
+              key={option.value}
+              type="button"
+              onClick={() => setKind(option.value)}
+              className={`dinx-tap flex-1 rounded-full py-2 text-sm font-semibold transition-colors ${
+                kind === option.value ? "bg-card text-ink shadow-sm" : "text-muted"
+              }`}
+            >
+              {option.label}
+            </button>
+          ))}
+        </div>
 
         {/* Amount ----------------------------------------------------------- */}
         <div className="rounded-[var(--radius-tile)] bg-page px-4 py-5 text-center">
@@ -206,7 +270,11 @@ export function AddTransactionSheet({
             Amount
           </label>
           <div className="flex items-center justify-center gap-1">
-            <span className={`text-3xl font-semibold ${kind === "expense" ? "text-ink" : "text-mint"}`}>
+            <span
+              className={`text-3xl font-semibold ${
+                kind === "expense" ? "text-ink" : kind === "income" ? "text-mint" : "text-plum-600"
+              }`}
+            >
               {kind === "expense" ? "−" : "+"} {currencySymbol(currency)}
             </span>
             <input
@@ -244,186 +312,251 @@ export function AddTransactionSheet({
           )}
         </div>
 
-        {/* Category --------------------------------------------------------- */}
-        <CategoryRail
-          categories={visibleCategories}
-          value={categoryId}
-          onChange={setCategoryId}
-          kind={kind}
-        />
+        {kind === "savings" ? (
+          <>
+            {/* Goal --------------------------------------------------------- */}
+            <GoalRail goals={savingsGoals} value={goalId} onChange={setGoalId} />
 
-        {/* Account ---------------------------------------------------------- */}
-        <AccountRail
-          paymentMethods={paymentMethods}
-          value={paymentMethodId}
-          onChange={setPaymentMethodId}
-          kind={kind}
-        />
-
-        {/* Who ------------------------------------------------------------- */}
-        <PersonPicker members={members} value={paidBy} onChange={setPaidBy} selfId={profile.id} />
-
-        {/* Income kind ------------------------------------------------------ */}
-        {kind === "income" && <IncomeKindPicker value={incomeKind} onChange={setIncomeKind} />}
-
-        {/* Description ------------------------------------------------------ */}
-        <div>
-          <label htmlFor="merchant" className="dinx-label">
-            {kind === "expense" ? "Where" : "Source"}
-          </label>
-          <div className="relative">
-            <input
-              id="merchant"
-              name="merchant"
-              type="text"
-              autoComplete="off"
-              value={merchant}
-              onChange={(e) => {
-                setMerchant(e.target.value);
-                setPickedMerchant(null);
-                setShowNameHints(true);
-              }}
-              onFocus={() => setShowNameHints(true)}
-              // Delayed so a tap on a suggestion registers before the list hides.
-              onBlur={() => setTimeout(() => setShowNameHints(false), 150)}
-              placeholder={kind === "expense" ? "Nike Store" : "Monthly salary"}
-              className="dinx-field"
+            {/* From account --------------------------------------------------- */}
+            <AccountRail
+              paymentMethods={paymentMethods}
+              value={paymentMethodId}
+              onChange={setPaymentMethodId}
+              kind="expense"
+              label="From account"
             />
 
-            {showNameHints && nameHints.length > 0 && (
-              <ul className="absolute z-10 mt-1 max-h-56 w-full overflow-y-auto rounded-2xl border border-line bg-card py-1 shadow-lg">
-                {nameHints.map((hint) => {
-                  const category = categories.find((c) => c.id === hint.categoryId);
-                  return (
-                    <li key={hint.name}>
-                      <button
-                        type="button"
-                        onMouseDown={(e) => e.preventDefault()}
-                        onClick={() => applySuggestion(hint)}
-                        className="flex w-full items-center gap-3 px-4 py-2.5 text-left active:bg-page"
-                      >
-                        <span className="text-base" aria-hidden>
-                          {category?.emoji ?? "🧾"}
-                        </span>
-                        <span className="min-w-0 flex-1">
-                          <span className="block truncate text-sm font-medium text-ink">
-                            {hint.name}
-                          </span>
-                          <span className="block truncate text-xs text-muted">
-                            {category?.name ?? "Uncategorised"} · used {hint.count}×
-                          </span>
-                        </span>
-                        {hint.amounts[0] !== undefined && (
-                          <span className="shrink-0 text-sm font-semibold text-plum-600">
-                            {money(hint.amounts[0], currency)}
-                          </span>
-                        )}
-                      </button>
-                    </li>
-                  );
-                })}
-              </ul>
-            )}
-          </div>
-        </div>
-
-        {/* Save as fixed — needs a name to key the shortcut on. ------------- */}
-        {kind === "expense" && (
-          <label
-            className={`flex items-center justify-between gap-3 rounded-2xl px-4 py-3 transition-colors ${
-              saveAsFixed ? "bg-plum-50" : "bg-page"
-            } ${merchant.trim() ? "" : "opacity-50"}`}
-          >
-            <span className="min-w-0">
-              <span className="block text-sm font-medium text-ink">📌 Save as fixed</span>
-              <span className="block text-xs text-muted">
-                {merchant.trim()
-                  ? `Adds "${merchant.trim()}" to Quick add for next time`
-                  : "Name it above to save as a shortcut"}
-              </span>
-            </span>
-            <input
-              type="checkbox"
-              checked={saveAsFixed}
-              disabled={!merchant.trim()}
-              onChange={(e) => setSaveAsFixed(e.target.checked)}
-              className="relative h-6 w-11 shrink-0 appearance-none rounded-full bg-line transition-colors checked:bg-plum-500
-                         before:absolute before:top-0.5 before:left-0.5 before:h-5 before:w-5 before:rounded-full
-                         before:bg-white before:transition-transform checked:before:translate-x-5"
+            {/* Who ------------------------------------------------------------- */}
+            <PersonPicker
+              members={members}
+              value={paidBy}
+              onChange={setPaidBy}
+              selfId={profile.id}
+              label="Saved by"
             />
-          </label>
-        )}
-
-        {/* Optional extras -------------------------------------------------- */}
-        <button
-          type="button"
-          onClick={() => setShowMore((v) => !v)}
-          className="dinx-tap text-sm font-medium text-plum-600"
-        >
-          {showMore ? "Hide extra details" : "Date, tax, split, note"}
-        </button>
-
-        {showMore && (
-          <div className="animate-rise space-y-4 rounded-[var(--radius-tile)] bg-page p-4">
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label htmlFor="occurred_on" className="dinx-label">
-                  Date
-                </label>
-                <input
-                  id="occurred_on"
-                  name="occurred_on"
-                  type="date"
-                  value={occurredOn}
-                  onChange={(e) => setOccurredOn(e.target.value)}
-                  className="dinx-field bg-card"
-                />
-              </div>
-              <div>
-                <label htmlFor="tax_amount" className="dinx-label">
-                  Tax / VAT
-                </label>
-                <input
-                  id="tax_amount"
-                  name="tax_amount"
-                  type="text"
-                  inputMode="decimal"
-                  placeholder="0.00"
-                  className="dinx-field bg-card"
-                />
-              </div>
-            </div>
-
-            {kind === "expense" && members.length > 1 && (
-              <>
-                <label className="flex items-center justify-between gap-3">
-                  <span className="text-sm font-medium text-ink">Shared cost</span>
-                  <Toggle checked={isShared} onChange={setIsShared} />
-                </label>
-                {isShared && (
-                  <div>
-                    <label htmlFor="split_percent" className="dinx-label">
-                      Your share
-                    </label>
-                    <select id="split_percent" name="split_percent" defaultValue="50" className="dinx-field bg-card">
-                      {SPLIT_OPTIONS.map((option) => (
-                        <option key={option.value} value={option.value}>
-                          {option.label}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                )}
-              </>
-            )}
 
             <div>
-              <label htmlFor="note" className="dinx-label">
+              <label htmlFor="savings-date" className="dinx-label">
+                Date
+              </label>
+              <input
+                id="savings-date"
+                type="date"
+                value={occurredOn}
+                onChange={(e) => setOccurredOn(e.target.value)}
+                className="dinx-field"
+              />
+            </div>
+
+            <div>
+              <label htmlFor="savings-note" className="dinx-label">
                 Note
               </label>
-              <textarea id="note" name="note" rows={2} placeholder="Optional" className="dinx-field bg-card resize-none" />
+              <textarea
+                id="savings-note"
+                value={note}
+                onChange={(e) => setNote(e.target.value)}
+                rows={2}
+                placeholder="Optional"
+                className="dinx-field resize-none"
+              />
             </div>
-          </div>
+          </>
+        ) : (
+          <>
+            {/* Category --------------------------------------------------------- */}
+            <CategoryRail
+              categories={visibleCategories}
+              value={categoryId}
+              onChange={setCategoryId}
+              kind={kind}
+            />
+
+            {/* Account ---------------------------------------------------------- */}
+            <AccountRail
+              paymentMethods={paymentMethods}
+              value={paymentMethodId}
+              onChange={setPaymentMethodId}
+              kind={kind}
+            />
+
+            {/* Who ------------------------------------------------------------- */}
+            <PersonPicker members={members} value={paidBy} onChange={setPaidBy} selfId={profile.id} />
+
+            {/* Income kind ------------------------------------------------------ */}
+            {kind === "income" && <IncomeKindPicker value={incomeKind} onChange={setIncomeKind} />}
+
+            {/* Description ------------------------------------------------------ */}
+            <div>
+              <label htmlFor="merchant" className="dinx-label">
+                {kind === "expense" ? "Where" : "Source"}
+              </label>
+              <div className="relative">
+                <input
+                  id="merchant"
+                  name="merchant"
+                  type="text"
+                  autoComplete="off"
+                  value={merchant}
+                  onChange={(e) => {
+                    setMerchant(e.target.value);
+                    setPickedMerchant(null);
+                    setShowNameHints(true);
+                  }}
+                  onFocus={() => setShowNameHints(true)}
+                  // Delayed so a tap on a suggestion registers before the list hides.
+                  onBlur={() => setTimeout(() => setShowNameHints(false), 150)}
+                  placeholder={kind === "expense" ? "Nike Store" : "Monthly salary"}
+                  className="dinx-field"
+                />
+
+                {showNameHints && nameHints.length > 0 && (
+                  <ul className="absolute z-10 mt-1 max-h-56 w-full overflow-y-auto rounded-2xl border border-line bg-card py-1 shadow-lg">
+                    {nameHints.map((hint) => {
+                      const category = categories.find((c) => c.id === hint.categoryId);
+                      return (
+                        <li key={hint.name}>
+                          <button
+                            type="button"
+                            onMouseDown={(e) => e.preventDefault()}
+                            onClick={() => applySuggestion(hint)}
+                            className="flex w-full items-center gap-3 px-4 py-2.5 text-left active:bg-page"
+                          >
+                            <span className="text-base" aria-hidden>
+                              {category?.emoji ?? "🧾"}
+                            </span>
+                            <span className="min-w-0 flex-1">
+                              <span className="block truncate text-sm font-medium text-ink">
+                                {hint.name}
+                              </span>
+                              <span className="block truncate text-xs text-muted">
+                                {category?.name ?? "Uncategorised"} · used {hint.count}×
+                              </span>
+                            </span>
+                            {hint.amounts[0] !== undefined && (
+                              <span className="shrink-0 text-sm font-semibold text-plum-600">
+                                {money(hint.amounts[0], currency)}
+                              </span>
+                            )}
+                          </button>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                )}
+              </div>
+            </div>
+
+            {/* Save as fixed — needs a name to key the shortcut on. ------------- */}
+            {kind === "expense" && (
+              <label
+                className={`flex items-center justify-between gap-3 rounded-2xl px-4 py-3 transition-colors ${
+                  saveAsFixed ? "bg-plum-50" : "bg-page"
+                } ${merchant.trim() ? "" : "opacity-50"}`}
+              >
+                <span className="min-w-0">
+                  <span className="block text-sm font-medium text-ink">📌 Save as fixed</span>
+                  <span className="block text-xs text-muted">
+                    {merchant.trim()
+                      ? `Adds "${merchant.trim()}" to Quick add for next time`
+                      : "Name it above to save as a shortcut"}
+                  </span>
+                </span>
+                <input
+                  type="checkbox"
+                  checked={saveAsFixed}
+                  disabled={!merchant.trim()}
+                  onChange={(e) => setSaveAsFixed(e.target.checked)}
+                  className="relative h-6 w-11 shrink-0 appearance-none rounded-full bg-line transition-colors checked:bg-plum-500
+                             before:absolute before:top-0.5 before:left-0.5 before:h-5 before:w-5 before:rounded-full
+                             before:bg-white before:transition-transform checked:before:translate-x-5"
+                />
+              </label>
+            )}
+
+            {/* Optional extras -------------------------------------------------- */}
+            <button
+              type="button"
+              onClick={() => setShowMore((v) => !v)}
+              className="dinx-tap text-sm font-medium text-plum-600"
+            >
+              {showMore ? "Hide extra details" : "Date, tax, split, note"}
+            </button>
+
+            {showMore && (
+              <div className="animate-rise space-y-4 rounded-[var(--radius-tile)] bg-page p-4">
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label htmlFor="occurred_on" className="dinx-label">
+                      Date
+                    </label>
+                    <input
+                      id="occurred_on"
+                      name="occurred_on"
+                      type="date"
+                      value={occurredOn}
+                      onChange={(e) => setOccurredOn(e.target.value)}
+                      className="dinx-field bg-card"
+                    />
+                  </div>
+                  <div>
+                    <label htmlFor="tax_amount" className="dinx-label">
+                      Tax / VAT
+                    </label>
+                    <input
+                      id="tax_amount"
+                      name="tax_amount"
+                      type="text"
+                      inputMode="decimal"
+                      placeholder="0.00"
+                      className="dinx-field bg-card"
+                    />
+                  </div>
+                </div>
+
+                {kind === "expense" && members.length > 1 && (
+                  <>
+                    <label className="flex items-center justify-between gap-3">
+                      <span className="text-sm font-medium text-ink">Shared cost</span>
+                      <Toggle checked={isShared} onChange={setIsShared} />
+                    </label>
+                    {isShared && (
+                      <div>
+                        <label htmlFor="split_percent_select" className="dinx-label">
+                          Your share
+                        </label>
+                        <select
+                          id="split_percent_select"
+                          value={splitPercent}
+                          onChange={(e) => setSplitPercent(e.target.value)}
+                          className="dinx-field bg-card"
+                        >
+                          {SPLIT_OPTIONS.map((option) => (
+                            <option key={option.value} value={option.value}>
+                              {option.label}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    )}
+                  </>
+                )}
+
+                <div>
+                  <label htmlFor="note" className="dinx-label">
+                    Note
+                  </label>
+                  <textarea
+                    id="note"
+                    name="note"
+                    rows={2}
+                    placeholder="Optional"
+                    className="dinx-field bg-card resize-none"
+                  />
+                </div>
+              </div>
+            )}
+          </>
         )}
 
         {state && !state.ok && (
@@ -438,17 +571,18 @@ export function AddTransactionSheet({
   );
 }
 
-function SubmitButton({ kind }: { kind: TxnKind }) {
+function SubmitButton({ kind }: { kind: AddKind }) {
   const { pending } = useFormStatus();
+  const label = kind === "expense" ? "Add expense" : kind === "income" ? "Add income" : "Add to savings";
+  const color = kind === "expense" ? "bg-coral" : kind === "income" ? "bg-mint" : "bg-plum-600";
+
   return (
     <button
       type="submit"
       disabled={pending}
-      className={`dinx-tap w-full rounded-2xl py-4 font-semibold text-white disabled:opacity-60 ${
-        kind === "expense" ? "bg-coral" : "bg-mint"
-      }`}
+      className={`dinx-tap w-full rounded-2xl py-4 font-semibold text-white disabled:opacity-60 ${color}`}
     >
-      {pending ? "Saving…" : kind === "expense" ? "Add expense" : "Add income"}
+      {pending ? "Saving…" : label}
     </button>
   );
 }

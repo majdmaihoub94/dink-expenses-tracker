@@ -1,6 +1,6 @@
 "use client";
 
-import type { Category, PaymentMethod, Profile, TxnKind } from "@/lib/types";
+import type { Category, PaymentMethod, Profile, SavingsGoal, TxnKind } from "@/lib/types";
 
 /**
  * Field blocks shared by the add and edit sheets, so the two forms cannot
@@ -46,20 +46,58 @@ export function CategoryRail({
   );
 }
 
+export function GoalRail({
+  goals,
+  value,
+  onChange,
+}: {
+  goals: SavingsGoal[];
+  value: string;
+  onChange: (id: string) => void;
+}) {
+  return (
+    <div>
+      <span className="dinx-label">Savings goal</span>
+      <div className="dinx-rail">
+        {goals.map((goal) => {
+          const active = value === goal.id;
+          return (
+            <button
+              key={goal.id}
+              type="button"
+              onClick={() => onChange(goal.id)}
+              className={`dinx-chip ${active ? "bg-plum-600 text-white" : "bg-page text-ink-soft"}`}
+            >
+              <span aria-hidden>{goal.emoji}</span>
+              {goal.name}
+            </button>
+          );
+        })}
+        {goals.length === 0 && (
+          <p className="py-2 text-sm text-muted">No goals yet — add one in Savings.</p>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export function AccountRail({
   paymentMethods,
   value,
   onChange,
   kind,
+  label,
 }: {
   paymentMethods: PaymentMethod[];
   value: string;
   onChange: (id: string) => void;
   kind: TxnKind;
+  /** Overrides the kind-based default — e.g. "From account" for a savings deposit. */
+  label?: string;
 }) {
   return (
     <div>
-      <span className="dinx-label">{kind === "expense" ? "Paid from" : "Paid into"}</span>
+      <span className="dinx-label">{label ?? (kind === "expense" ? "Paid from" : "Paid into")}</span>
       <div className="dinx-rail">
         {paymentMethods.map((method) => {
           const active = value === method.id;

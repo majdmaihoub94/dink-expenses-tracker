@@ -16,9 +16,11 @@ import {
   signOutAction,
   updateHouseholdAction,
   updateProfileAction,
+  updateSharingDefaultsAction,
 } from "@/app/actions";
 import { ImportStatementSheet } from "@/components/ImportStatementSheet";
 import { Sheet } from "@/components/Sheet";
+import { SPLIT_OPTIONS, Toggle } from "@/components/TransactionFields";
 import { money } from "@/lib/format";
 import type { Category, FixedExpense, Household, PaymentMethod, Profile } from "@/lib/types";
 
@@ -29,6 +31,7 @@ type Panel =
   | "fixed"
   | "import"
   | "accounts"
+  | "sharing"
   | "household"
   | "invite"
   | null;
@@ -120,6 +123,16 @@ export function ProfileView({
           onClick={() => setPanel("import")}
         />
         <Row
+          emoji="🤝"
+          title="Sharing defaults"
+          caption={
+            household.default_expense_shared
+              ? `Shared by default · ${household.default_split_percent}% mine`
+              : "Personal by default"
+          }
+          onClick={() => setPanel("sharing")}
+        />
+        <Row
           emoji="🗓️"
           title="Budget cycle"
           caption={`${ordinal(household.cycle_start_day)} to ${ordinal(
@@ -182,6 +195,11 @@ export function ProfileView({
         categories={categories}
         paymentMethods={paymentMethods}
         currency={household.currency}
+      />
+      <SharingDefaultsPanel
+        open={panel === "sharing"}
+        onClose={() => setPanel(null)}
+        household={household}
       />
       <HouseholdPanel open={panel === "household"} onClose={() => setPanel(null)} household={household} />
       <InvitePanel
@@ -943,6 +961,74 @@ function AccountsPanel({
           </div>
         </div>
       )}
+    </Sheet>
+  );
+}
+
+function SharingDefaultsPanel({
+  open,
+  onClose,
+  household,
+}: {
+  open: boolean;
+  onClose: () => void;
+  household: Household;
+}) {
+  const [shared, setShared] = useState(household.default_expense_shared);
+  const [error, setError] = useState<string | null>(null);
+  if (!open) return null;
+
+  return (
+    <Sheet open onClose={onClose} title="Sharing defaults">
+      <form
+        action={async (fd) => {
+          const result = await updateSharingDefaultsAction(fd);
+          if (result.ok) onClose();
+          else setError(result.error);
+        }}
+        className="space-y-4"
+      >
+        <p className="rounded-2xl bg-plum-50 px-4 py-3 text-xs text-ink-soft">
+          Sets what a new expense starts as. Most day-to-day spending is personal — flip a
+          particular expense to shared right there on the add form whenever it isn&rsquo;t.
+        </p>
+
+        <label className="flex items-center justify-between gap-3 rounded-2xl bg-page px-4 py-3">
+          <span className="min-w-0">
+            <span className="block text-sm font-medium text-ink">Shared by default</span>
+            <span className="block text-xs text-muted">
+              {shared ? "New expenses start marked as shared" : "New expenses start as personal"}
+            </span>
+          </span>
+          <Toggle checked={shared} onChange={setShared} />
+        </label>
+        <input type="hidden" name="default_expense_shared" value={shared ? "true" : "false"} />
+
+        {shared && (
+          <div>
+            <label htmlFor="default-split" className="dinx-label">
+              Default split
+            </label>
+            <select
+              id="default-split"
+              name="default_split_percent"
+              defaultValue={String(household.default_split_percent)}
+              className="dinx-field"
+            >
+              {SPLIT_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
+        {!shared && <input type="hidden" name="default_split_percent" value="50" />}
+
+        {error && <p role="alert" className="rounded-2xl bg-rose/10 px-4 py-3 text-sm text-rose">{error}</p>}
+
+        <Submit label="Save" />
+      </form>
     </Sheet>
   );
 }

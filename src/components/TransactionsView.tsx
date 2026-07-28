@@ -9,7 +9,12 @@ import type { Cycle } from "@/lib/cycle";
 import { money, moneyParts } from "@/lib/format";
 import type { Category, PaymentMethod, Profile, TransactionWithRefs } from "@/lib/types";
 
-type Filter = { kind: "all" | "expense" | "income"; categoryId: string | null; personId: string | null };
+type Filter = {
+  kind: "all" | "expense" | "income";
+  /** Multiple categories can be active at once; an empty set means "all". */
+  categoryIds: Set<string>;
+  personId: string | null;
+};
 
 /**
  * The receipts screen: a dark summary card that responds to the active filter,
@@ -35,14 +40,16 @@ export function TransactionsView({
   profile: Profile;
 }) {
   const { openAdd } = useShell();
-  const [filter, setFilter] = useState<Filter>({ kind: "all", categoryId: null, personId: null });
+  const [filter, setFilter] = useState<Filter>({ kind: "all", categoryIds: new Set(), personId: null });
   const [query, setQuery] = useState("");
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     return transactions.filter((t) => {
       if (filter.kind !== "all" && t.kind !== filter.kind) return false;
-      if (filter.categoryId && t.category_id !== filter.categoryId) return false;
+      if (filter.categoryIds.size > 0 && (!t.category_id || !filter.categoryIds.has(t.category_id))) {
+        return false;
+      }
       if (filter.personId && t.paid_by !== filter.personId) return false;
       if (!q) return true;
       return [t.merchant, t.note, t.category?.name, t.payment_method?.name]
@@ -57,7 +64,17 @@ export function TransactionsView({
   );
   const tax = filtered.reduce((sum, t) => sum + Number(t.tax_amount), 0);
 
-  const activeCategory = categories.find((c) => c.id === filter.categoryId);
+  const selectedCategoryNames = categories
+    .filter((c) => filter.categoryIds.has(c.id))
+    .map((c) => c.name);
+  const summaryLabel =
+    selectedCategoryNames.length === 0
+      ? filter.kind === "income"
+        ? "Income"
+        : "All transactions"
+      : selectedCategoryNames.length === 1
+        ? selectedCategoryNames[0]
+        : `${selectedCategoryNames.length} categories`;
   const parts = moneyParts(total, currency);
 
   // Only show categories that actually appear in this cycle, most-used first.
@@ -83,9 +100,7 @@ export function TransactionsView({
           <span className="text-[2rem] leading-none font-semibold">{parts.whole}</span>
           <span className="text-lg font-medium text-white/80">.{parts.pence}</span>
         </p>
-        <p className="mt-1 text-sm font-medium text-white/85">
-          {activeCategory?.name ?? (filter.kind === "income" ? "Income" : "All transactions")}
-        </p>
+        <p className="mt-1 text-sm font-medium text-white/85">{summaryLabel}</p>
         <p className="text-xs text-white/55">
           {tax > 0 && `Tax: ${money(tax, currency)} · `}
           {cycle.label}
@@ -159,24 +174,36 @@ export function TransactionsView({
 
       {usedCategories.length > 0 && (
         <div className="dinx-rail">
-          {usedCategories.map((category) => (
+          {filter.categoryIds.size > 0 && (
             <button
-              key={category.id}
               type="button"
-              onClick={() =>
-                setFilter((f) => ({
-                  ...f,
-                  categoryId: f.categoryId === category.id ? null : category.id,
-                }))
-              }
-              className={`dinx-chip ${
-                filter.categoryId === category.id ? "bg-plum-600 text-white" : "bg-card text-ink-soft"
-              }`}
+              onClick={() => setFilter((f) => ({ ...f, categoryIds: new Set() }))}
+              className="dinx-chip bg-page text-ink-soft"
             >
-              <span aria-hidden>{category.emoji}</span>
-              {category.name}
+              Clear ({filter.categoryIds.size})
             </button>
-          ))}
+          )}
+          {usedCategories.map((category) => {
+            const active = filter.categoryIds.has(category.id);
+            return (
+              <button
+                key={category.id}
+                type="button"
+                onClick={() =>
+                  setFilter((f) => {
+                    const next = new Set(f.categoryIds);
+                    if (next.has(category.id)) next.delete(category.id);
+                    else next.add(category.id);
+                    return { ...f, categoryIds: next };
+                  })
+                }
+                className={`dinx-chip ${active ? "bg-plum-600 text-white" : "bg-card text-ink-soft"}`}
+              >
+                <span aria-hidden>{category.emoji}</span>
+                {category.name}
+              </button>
+            );
+          })}
         </div>
       )}
 
@@ -235,8 +262,19 @@ function AccountBreakdown({
 
   if (rows.length === 0) return null;
 
+  const grandTotal = rows.reduce((sum, row) => sum + row.amount, 0);
+
   return (
     <div className="dinx-rail">
+      {rows.length > 1 && (
+        <div className="flex shrink-0 items-center gap-2 rounded-2xl bg-plum-800 px-4 py-3 text-white">
+          <span className="h-2 w-2 rounded-full bg-white/70" aria-hidden />
+          <div>
+            <p className="text-xs text-white/70">All accounts</p>
+            <p className="text-sm font-semibold">{money(grandTotal, currency)}</p>
+          </div>
+        </div>
+      )}
       {rows.map(({ method, amount }) => (
         <div
           key={method.id}

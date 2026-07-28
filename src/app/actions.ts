@@ -845,6 +845,36 @@ export async function addSavingsContributionAction(formData: FormData): Promise<
   return OK;
 }
 
+/** Edits an existing deposit or withdrawal. Amount arrives already signed. */
+export async function updateSavingsContributionAction(formData: FormData): Promise<ActionResult> {
+  const { supabase, profile } = await requireActor();
+
+  const id = str(formData, "id");
+  if (!id) return fail("Missing contribution.");
+
+  const goalId = str(formData, "goal_id");
+  const amount = num(formData, "amount");
+  if (!goalId) return fail("Pick a goal.");
+  if (amount === 0) return fail("Enter an amount.");
+
+  const { error } = await supabase
+    .from("savings_contributions")
+    .update({
+      goal_id: goalId,
+      amount,
+      paid_by: str(formData, "paid_by") || profile.id,
+      payment_method_id: str(formData, "payment_method_id") || null,
+      note: str(formData, "note") || null,
+      occurred_on: str(formData, "occurred_on") || new Date().toISOString().slice(0, 10),
+    })
+    .eq("id", id);
+
+  if (error) return fail(error.message);
+
+  refreshAll();
+  return OK;
+}
+
 export async function deleteSavingsContributionAction(formData: FormData): Promise<ActionResult> {
   const { supabase } = await requireActor();
   const { error } = await supabase
@@ -1040,6 +1070,28 @@ export async function updateHouseholdAction(formData: FormData): Promise<ActionR
       currency: str(formData, "currency") || "GBP",
       cycle_start_day: startDay,
       cycle_label_mode: str(formData, "cycle_label_mode") === "start" ? "start" : "end",
+    })
+    .eq("id", householdId);
+
+  if (error) return fail(error.message);
+  refreshAll();
+  return OK;
+}
+
+/** Pre-fills the shared-cost toggle and split on new expenses. */
+export async function updateSharingDefaultsAction(formData: FormData): Promise<ActionResult> {
+  const { supabase, householdId } = await requireActor();
+
+  const splitPercent = Number(str(formData, "default_split_percent") || "50");
+  if (!Number.isFinite(splitPercent) || splitPercent < 0 || splitPercent > 100) {
+    return fail("Split must be between 0 and 100.");
+  }
+
+  const { error } = await supabase
+    .from("households")
+    .update({
+      default_expense_shared: bool(formData, "default_expense_shared"),
+      default_split_percent: splitPercent,
     })
     .eq("id", householdId);
 
