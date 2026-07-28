@@ -25,7 +25,7 @@ export async function POST() {
     return NextResponse.json({ error: "No household" }, { status: 400 });
   }
 
-  await notifyHousehold({
+  const result = await notifyHousehold({
     householdId: profile.household_id,
     actorId: user.id,
     pref: "notify_partner_expense",
@@ -37,5 +37,16 @@ export async function POST() {
     },
   });
 
-  return NextResponse.json({ ok: true });
+  const message =
+    result.reason === "unconfigured"
+      ? "Push isn't configured on the server (missing VAPID keys)."
+      : result.reason === "no_recipients"
+        ? "No one else in your household has notifications turned on in their settings."
+        : result.reason === "no_subscriptions"
+          ? "Your partner hasn't enabled alerts on their device yet — ask them to open Profile and tap Enable."
+          : result.sent > 0
+            ? `Sent to ${result.sent} device${result.sent === 1 ? "" : "s"}. If it didn't pop up, check the device's OS-level notification settings for DINX.`
+            : "Delivery failed for every subscribed device — the subscription may be stale.";
+
+  return NextResponse.json({ ok: true, message, ...result });
 }
