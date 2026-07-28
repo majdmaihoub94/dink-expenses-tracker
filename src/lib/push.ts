@@ -36,11 +36,23 @@ export type NotifyPref = keyof Pick<
   "notify_partner_expense" | "notify_partner_income" | "notify_planned_paid" | "notify_savings"
 >;
 
+export type NotifyResult = {
+  /** Why nothing was sent, if nothing was — lets callers show a precise diagnosis. */
+  reason?: "unconfigured" | "no_recipients" | "no_subscriptions";
+  recipients: number;
+  subscriptions: number;
+  sent: number;
+  failed: number;
+};
+
 /**
  * Pushes to everyone in the household except the person who caused the event,
  * respecting each recipient's own notification preference.
  *
- * Fire-and-forget: a push failure must never fail the write that triggered it.
+ * Fire-and-forget for callers that don't need it: a push failure must never
+ * fail the write that triggered it. The return value exists so /api/push/test
+ * can tell a user exactly which stage (config, subscription, delivery) failed,
+ * since none of this is visible from the device itself.
  */
 export async function notifyHousehold({
   householdId,
@@ -52,8 +64,10 @@ export async function notifyHousehold({
   actorId: string;
   pref: NotifyPref;
   payload: PushPayload;
-}): Promise<void> {
-  if (!ensureConfigured()) return;
+}): Promise<NotifyResult> {
+  if (!ensureConfigured()) {
+    return { reason: "unconfigured", recipients: 0, subscriptions: 0, sent: 0, failed: 0 };
+  }
 
   try {
     const admin = createAdminClient();
@@ -68,16 +82,28 @@ export async function notifyHousehold({
       .filter((r) => (r as unknown as Record<string, boolean>)[pref] !== false)
       .map((r) => (r as unknown as { id: string }).id);
 
-    if (targetIds.length === 0) return;
+    if (targetIds.length === 0) {
+      return { reason: "no_recipients", recipients: 0, subscriptions: 0, sent: 0, failed: 0 };
+    }
 
     const { data: subs } = await admin
       .from("push_subscriptions")
       .select("*")
       .in("profile_id", targetIds);
 
-    if (!subs?.length) return;
+    if (!subs?.length) {
+      return {
+        reason: "no_subscriptions",
+        recipients: targetIds.length,
+        subscriptions: 0,
+        sent: 0,
+        failed: 0,
+      };
+    }
 
     const body = JSON.stringify(payload);
+    let sent = 0;
+    let failed = 0;
 
     await Promise.all(
       subs.map(async (sub) => {
@@ -89,6 +115,7 @@ export async function notifyHousehold({
             },
             body,
           );
+          sent += 1;
         } catch (error) {
           const status = (error as { statusCode?: number }).statusCode;
           // 404/410 mean the browser dropped the subscription — clean it up so
@@ -98,10 +125,14 @@ export async function notifyHousehold({
           } else {
             console.error("[push] send failed", status, error);
           }
+          failed += 1;
         }
       }),
     );
+
+    return { recipients: targetIds.length, subscriptions: subs.length, sent, failed };
   } catch (error) {
     console.error("[push] notifyHousehold failed", error);
+    return { recipients: 0, subscriptions: 0, sent: 0, failed: 0 };
   }
 }

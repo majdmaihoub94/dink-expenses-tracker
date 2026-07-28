@@ -18,6 +18,8 @@ type State = "unsupported" | "unconfigured" | "default" | "granted" | "denied" |
 export function PushManager({ vapidPublicKey }: { vapidPublicKey?: string }) {
   const [state, setState] = useState<State>("working");
   const [error, setError] = useState<string | null>(null);
+  const [testResult, setTestResult] = useState<string | null>(null);
+  const [testing, setTesting] = useState(false);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -76,7 +78,50 @@ export function PushManager({ vapidPublicKey }: { vapidPublicKey?: string }) {
     }
   }, [vapidPublicKey]);
 
-  if (state === "granted" || state === "unsupported" || state === "unconfigured") return null;
+  const sendTest = useCallback(async () => {
+    setTesting(true);
+    setTestResult(null);
+    try {
+      const response = await fetch("/api/push/test", { method: "POST" });
+      const data = (await response.json().catch(() => ({}))) as { message?: string; error?: string };
+      setTestResult(data.message ?? data.error ?? "Something went wrong sending the test.");
+    } catch {
+      setTestResult("Couldn't reach the server to send a test.");
+    } finally {
+      setTesting(false);
+    }
+  }, []);
+
+  if (state === "unsupported" || state === "unconfigured") return null;
+
+  if (state === "granted") {
+    // Nothing is broken here, but push failures are otherwise invisible from
+    // the device — this lets either partner confirm delivery end-to-end
+    // (config → subscription → OS pop-up) without touching server logs.
+    return (
+      <div className="dinx-tile flex flex-col gap-2 bg-plum-50">
+        <div className="flex items-center gap-3">
+          <span className="text-2xl" aria-hidden>
+            🔔
+          </span>
+          <div className="min-w-0 flex-1">
+            <p className="text-sm font-semibold text-ink">Alerts are on</p>
+            <p className="text-xs text-ink-soft">
+              {testResult ?? "Send a test to make sure it pops up on your partner's device."}
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={sendTest}
+            disabled={testing}
+            className="dinx-tap shrink-0 rounded-full bg-plum-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60"
+          >
+            {testing ? "…" : "Send test"}
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="dinx-tile flex items-center gap-3 bg-plum-50">
