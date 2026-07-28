@@ -48,6 +48,10 @@ create table if not exists households (
   -- 'start' => 25 Apr–24 May is labelled "April"
   cycle_label_mode text not null default 'end' check (cycle_label_mode in ('start', 'end')),
   invite_code      text not null unique default upper(substr(encode(gen_random_bytes(6), 'hex'), 1, 8)),
+  -- Pre-fills the "shared cost" toggle on new expenses. Off by default since
+  -- most day-to-day spending is personal, not joint.
+  default_expense_shared boolean not null default false,
+  default_split_percent  smallint not null default 50 check (default_split_percent between 0 and 100),
   created_at       timestamptz not null default now()
 );
 

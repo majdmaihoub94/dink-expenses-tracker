@@ -1,13 +1,15 @@
 "use client";
 
 import { format, parseISO } from "date-fns";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useFormStatus } from "react-dom";
 
 import {
   addSavingsContributionAction,
+  deleteSavingsContributionAction,
   deleteSavingsGoalAction,
   saveSavingsGoalAction,
+  updateSavingsContributionAction,
 } from "@/app/actions";
 import { Sheet } from "@/components/Sheet";
 import { money, percent } from "@/lib/format";
@@ -32,6 +34,7 @@ export function SavingsView({
 }) {
   const [goalSheet, setGoalSheet] = useState<SavingsGoal | "new" | null>(null);
   const [contributeTo, setContributeTo] = useState<SavingsGoal | null>(null);
+  const [editingContribution, setEditingContribution] = useState<SavingsContribution | null>(null);
 
   const totalSaved = rows.reduce((sum, r) => sum + r.saved, 0);
   const totalTarget = rows.reduce((sum, r) => sum + Number(r.goal.target_amount), 0);
@@ -166,7 +169,12 @@ export function SavingsView({
               const goal = rows.find((r) => r.goal.id === c.goal_id)?.goal;
               const person = members.find((m) => m.id === c.paid_by);
               return (
-                <div key={c.id} className="flex items-center gap-3">
+                <button
+                  key={c.id}
+                  type="button"
+                  onClick={() => setEditingContribution(c)}
+                  className="dinx-tap flex w-full items-center gap-3 rounded-2xl px-1 py-1 text-left active:bg-page"
+                >
                   <span className="text-base" aria-hidden>
                     {goal?.emoji ?? "🐖"}
                   </span>
@@ -183,7 +191,7 @@ export function SavingsView({
                   >
                     {Number(c.amount) < 0 ? "−" : "+"} {money(Number(c.amount), currency)}
                   </span>
-                </div>
+                </button>
               );
             })}
           </div>
@@ -199,7 +207,11 @@ export function SavingsView({
       <ContributeSheet
         goals={rows.map((r) => r.goal)}
         initialGoal={contributeTo}
-        onClose={() => setContributeTo(null)}
+        editing={editingContribution}
+        onClose={() => {
+          setContributeTo(null);
+          setEditingContribution(null);
+        }}
         members={members}
         paymentMethods={paymentMethods}
         profileId={profileId}
@@ -345,6 +357,7 @@ function GoalSheet({
 function ContributeSheet({
   goals,
   initialGoal,
+  editing,
   onClose,
   members,
   paymentMethods,
@@ -353,6 +366,8 @@ function ContributeSheet({
 }: {
   goals: SavingsGoal[];
   initialGoal: SavingsGoal | null;
+  /** Editing an existing deposit/withdrawal, in place of logging a new one. */
+  editing: SavingsContribution | null;
   onClose: () => void;
   members: Profile[];
   paymentMethods: PaymentMethod[];
@@ -362,18 +377,36 @@ function ContributeSheet({
   const [error, setError] = useState<string | null>(null);
   const [withdrawing, setWithdrawing] = useState(false);
 
-  if (!initialGoal) return null;
+  // Re-derive whenever a different contribution is opened for editing.
+  useEffect(() => {
+    setWithdrawing(editing ? Number(editing.amount) < 0 : false);
+    setError(null);
+  }, [editing]);
+
+  const open = Boolean(initialGoal || editing);
+  if (!open) return null;
+
+  const defaultGoalId = editing?.goal_id ?? initialGoal?.id ?? goals[0]?.id ?? "";
+  const defaultAmount = editing ? String(Math.abs(Number(editing.amount))) : "";
+  const defaultPaidBy = editing?.paid_by ?? profileId;
+  const defaultMethod = editing?.payment_method_id ?? "";
+  const defaultDate = editing?.occurred_on ?? new Date().toISOString().slice(0, 10);
+
+  const title = editing ? "Edit contribution" : withdrawing ? "Withdraw from savings" : "Add to savings";
 
   return (
-    <Sheet open onClose={onClose} title={withdrawing ? "Withdraw from savings" : "Add to savings"}>
+    <Sheet open onClose={onClose} title={title}>
       <form
         action={async (formData) => {
+          if (editing) formData.set("id", editing.id);
           // Withdrawals are stored as negative contributions.
           if (withdrawing) {
             const raw = String(formData.get("amount") ?? "");
             formData.set("amount", `-${raw.replace(/^-/, "")}`);
           }
-          const result = await addSavingsContributionAction(formData);
+          const result = editing
+            ? await updateSavingsContributionAction(formData)
+            : await addSavingsContributionAction(formData);
           if (result.ok) onClose();
           else setError(result.error);
         }}
@@ -401,7 +434,7 @@ function ContributeSheet({
           <label htmlFor="contrib-goal" className="dinx-label">
             Goal
           </label>
-          <select id="contrib-goal" name="goal_id" defaultValue={initialGoal.id} className="dinx-field">
+          <select id="contrib-goal" name="goal_id" defaultValue={defaultGoalId} className="dinx-field">
             {goals.map((g) => (
               <option key={g.id} value={g.id}>
                 {g.emoji} {g.name}
@@ -419,6 +452,7 @@ function ContributeSheet({
             name="amount"
             type="text"
             inputMode="decimal"
+            defaultValue={defaultAmount}
             placeholder="250"
             required
             className="dinx-field text-xl font-semibold"
@@ -428,7 +462,7 @@ function ContributeSheet({
         {members.length > 1 && (
           <div>
             <span className="dinx-label">From</span>
-            <select name="paid_by" defaultValue={profileId} className="dinx-field">
+            <select name="paid_by" defaultValue={defaultPaidBy} className="dinx-field">
               {members.map((m) => (
                 <option key={m.id} value={m.id}>
                   {m.emoji} {m.display_name}
@@ -442,7 +476,7 @@ function ContributeSheet({
           <label htmlFor="contrib-method" className="dinx-label">
             Account
           </label>
-          <select id="contrib-method" name="payment_method_id" className="dinx-field">
+          <select id="contrib-method" name="payment_method_id" defaultValue={defaultMethod} className="dinx-field">
             <option value="">Not specified</option>
             {paymentMethods.map((m) => (
               <option key={m.id} value={m.id}>
@@ -460,7 +494,7 @@ function ContributeSheet({
             id="contrib-date"
             name="occurred_on"
             type="date"
-            defaultValue={new Date().toISOString().slice(0, 10)}
+            defaultValue={defaultDate}
             className="dinx-field"
           />
         </div>
@@ -471,8 +505,23 @@ function ContributeSheet({
           </p>
         )}
 
-        <SubmitButton label={withdrawing ? "Withdraw" : "Add to savings"} />
+        <SubmitButton label={editing ? "Save changes" : withdrawing ? "Withdraw" : "Add to savings"} />
       </form>
+
+      {editing && (
+        <form
+          action={async (formData) => {
+            await deleteSavingsContributionAction(formData);
+            onClose();
+          }}
+          className="mt-3"
+        >
+          <input type="hidden" name="id" value={editing.id} />
+          <button type="submit" className="dinx-tap w-full rounded-2xl bg-page py-3 font-semibold text-rose">
+            Delete contribution
+          </button>
+        </form>
+      )}
     </Sheet>
   );
 }

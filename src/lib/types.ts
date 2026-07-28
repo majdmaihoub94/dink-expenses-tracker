@@ -17,6 +17,8 @@ export type Household = {
   cycle_start_day: number;
   cycle_label_mode: "start" | "end";
   invite_code: string;
+  default_expense_shared: boolean;
+  default_split_percent: number;
 };
 
 export type Profile = {
