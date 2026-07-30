@@ -7,6 +7,7 @@ import type {
   Category,
   FixedExpense,
   Household,
+  HouseholdBudget,
   PaymentMethod,
   PlannedExpense,
   PlannedPayment,
@@ -371,6 +372,56 @@ export async function getCycleTrend(
     }
     return { cycle, expense, income };
   });
+}
+
+/** The household's income + savings target, or null if never set up. */
+export async function getHouseholdBudget(householdId: string): Promise<HouseholdBudget | null> {
+  const supabase = await createClient();
+  const { data } = await supabase
+    .from("household_budgets")
+    .select("*")
+    .eq("household_id", householdId)
+    .maybeSingle<HouseholdBudget>();
+  return data ?? null;
+}
+
+/**
+ * Per-cycle, per-category expense totals for the given cycles — one grouped
+ * query bucketed in memory, the same shape as `getCycleTrend` but keeping the
+ * category breakdown the smart allocation and forecast need.
+ */
+export async function getCycleCategoryTrend(
+  householdId: string,
+  cycles: Cycle[],
+): Promise<Map<string, Map<string, number>>> {
+  const result = new Map<string, Map<string, number>>();
+  if (cycles.length === 0) return result;
+
+  const supabase = await createClient();
+  const from = cycleBounds(cycles[0]).from;
+  const to = cycleBounds(cycles[cycles.length - 1]).to;
+
+  const { data } = await supabase
+    .from("transactions")
+    .select("amount, category_id, occurred_on")
+    .eq("household_id", householdId)
+    .eq("kind", "expense")
+    .gte("occurred_on", from)
+    .lte("occurred_on", to);
+
+  for (const cycle of cycles) {
+    const bounds = cycleBounds(cycle);
+    const byCategory = new Map<string, number>();
+    for (const row of data ?? []) {
+      const occurredOn = row.occurred_on as string;
+      if (occurredOn < bounds.from || occurredOn > bounds.to) continue;
+      if (!row.category_id) continue;
+      byCategory.set(row.category_id, (byCategory.get(row.category_id) ?? 0) + Number(row.amount));
+    }
+    result.set(cycle.key, byCategory);
+  }
+
+  return result;
 }
 
 /**
