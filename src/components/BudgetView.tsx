@@ -4,8 +4,8 @@ import { useMemo, useState } from "react";
 import { useFormStatus } from "react-dom";
 
 import {
-  applySuggestedCapsAction,
   refreshBudgetInsightsAction,
+  saveBudgetAllocationAction,
   saveBudgetSettingsAction,
 } from "@/app/actions";
 import { BarChart } from "@/components/BarChart";
@@ -127,9 +127,6 @@ function CycleTab(props: BudgetViewProps) {
   const spendableRatio = allocation.spendable > 0 ? Math.min(spentSoFar / allocation.spendable, 1) : 0;
 
   const allocationRows = allocation.rows.filter((r) => r.suggested > 0 || r.spent > 0);
-  const allocationsPayload = JSON.stringify(
-    allocationRows.filter((r) => r.suggested > 0).map((r) => ({ id: r.category.id, amount: r.suggested })),
-  );
 
   return (
     <div className="space-y-4">
@@ -189,97 +186,140 @@ function CycleTab(props: BudgetViewProps) {
         </section>
       )}
 
-      <section className="dinx-card">
-        <div className="mb-1 flex items-baseline justify-between gap-2">
-          <h2 className="text-base font-semibold text-ink">Smart allocation</h2>
-          <span className="text-xs text-muted">Recent cycles + this one</span>
-        </div>
-        <p className="mb-3 text-xs text-muted">
-          <span className="font-semibold text-ink">Bold</span> is what you&apos;ve spent so far this
-          cycle. <span className="text-muted">Grey</span> is the suggested cap for the <em>full</em>{" "}
-          cycle. <span className="font-medium text-ink">Fixed</span> categories come straight from
-          Planned expenses — exact, not a guess, and never trimmed. Everything else shares what&apos;s left.
-        </p>
-
-        {allocationRows.length === 0 ? (
-          <p className="py-4 text-center text-sm text-muted">
-            Log a few days of spending and DINX will suggest a cap per category here.
-          </p>
-        ) : (
-          <div className="space-y-3">
-            {allocationRows.map((row) => {
-              const hasSuggestion = row.suggested > 0;
-              const ratio = hasSuggestion ? row.spent / row.suggested : 0;
-              const over = hasSuggestion && row.spent > row.suggested;
-              return (
-                <div key={row.category.id} className="flex items-center gap-3">
-                  <span
-                    className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-base"
-                    style={{ backgroundColor: row.category.color }}
-                    aria-hidden
-                  >
-                    {row.category.emoji}
-                  </span>
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-baseline justify-between gap-2">
-                      <span className="truncate text-sm font-medium text-ink">
-                        {row.category.name}
-                        <span className="ml-1.5 text-[10px] font-normal text-muted">
-                          {row.fixedAmount > 0 ? "fixed" : row.essential ? "need" : "want"}
-                        </span>
-                      </span>
-                      <span className={`shrink-0 text-sm font-semibold ${over ? "text-rose" : "text-ink"}`}>
-                        {money(row.spent, currency)}
-                        {hasSuggestion ? (
-                          <span className="font-normal text-muted"> / {money(row.suggested, currency)}</span>
-                        ) : (
-                          <span className="font-normal text-muted"> · no cap yet</span>
-                        )}
-                      </span>
-                    </div>
-                    <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-page">
-                      <div
-                        className={`h-full rounded-full ${
-                          !hasSuggestion ? "bg-line" : over ? "bg-rose" : "bg-plum-500"
-                        }`}
-                        style={{
-                          width: hasSuggestion ? `${Math.max(Math.min(ratio, 1) * 100, 2)}%` : "100%",
-                        }}
-                      />
-                    </div>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        )}
-
-        {allocationRows.some((r) => r.suggested > 0) && (
-          <ApplyCapsForm allocationsPayload={allocationsPayload} />
-        )}
-      </section>
+      <SmartAllocationForm rows={allocationRows} currency={currency} />
 
       <AiRefreshCard {...props} />
     </div>
   );
 }
 
-function ApplyCapsForm({ allocationsPayload }: { allocationsPayload: string }) {
+function SmartAllocationForm({ rows, currency }: { rows: Allocation["rows"]; currency: string }) {
   const [error, setError] = useState<string | null>(null);
+  const [resettingId, setResettingId] = useState<string | null>(null);
+
+  const handleReset = async (categoryId: string) => {
+    setError(null);
+    setResettingId(categoryId);
+    const fd = new FormData();
+    fd.set("allocations", JSON.stringify([{ id: categoryId, reset: true }]));
+    const result = await saveBudgetAllocationAction(fd);
+    if (!result.ok) setError(result.error);
+    setResettingId(null);
+  };
 
   return (
-    <form
-      action={async (formData) => {
-        setError(null);
-        const result = await applySuggestedCapsAction(formData);
-        if (!result.ok) setError(result.error);
-      }}
-      className="mt-4"
-    >
-      <input type="hidden" name="allocations" value={allocationsPayload} />
-      <ApplyCapsButton />
-      {error && <p className="mt-2 text-xs text-rose">{error}</p>}
-    </form>
+    <section className="dinx-card">
+      <div className="mb-1 flex items-baseline justify-between gap-2">
+        <h2 className="text-base font-semibold text-ink">Smart allocation</h2>
+        <span className="text-xs text-muted">Recent cycles + this one</span>
+      </div>
+      <p className="mb-3 text-xs text-muted">
+        <span className="font-semibold text-ink">Bold</span> is what you&apos;ve spent so far this
+        cycle. Edit any cap below and tick <span className="font-medium text-ink">Fixed</span> to lock
+        it in as a known bill DINX won&apos;t try to recalculate or suggest changing — the same
+        treatment a Planned expense gets. <span className="font-medium text-ink">Reset</span> hands a
+        category back to being auto-suggested.
+      </p>
+
+      {rows.length === 0 ? (
+        <p className="py-4 text-center text-sm text-muted">
+          Log a few days of spending and DINX will suggest a cap per category here.
+        </p>
+      ) : (
+        <form
+          action={async (formData) => {
+            setError(null);
+            const allocations = rows.map((row) => ({
+              id: row.category.id,
+              amount: Number(String(formData.get(`amount:${row.category.id}`) ?? "").replace(/[^0-9.-]/g, "")) || 0,
+              fixed: formData.get(`fixed:${row.category.id}`) === "on",
+            }));
+            const fd = new FormData();
+            fd.set("allocations", JSON.stringify(allocations));
+            const result = await saveBudgetAllocationAction(fd);
+            if (!result.ok) setError(result.error);
+          }}
+          className="space-y-4"
+        >
+          <div className="space-y-4">
+            {rows.map((row) => {
+              const hasSuggestion = row.suggested > 0;
+              const ratio = hasSuggestion ? row.spent / row.suggested : 0;
+              const over = hasSuggestion && row.spent > row.suggested;
+              return (
+                <div key={row.category.id} className="border-b border-line pb-4 last:border-0 last:pb-0">
+                  <div className="flex items-center gap-3">
+                    <span
+                      className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-base"
+                      style={{ backgroundColor: row.category.color }}
+                      aria-hidden
+                    >
+                      {row.category.emoji}
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-baseline justify-between gap-2">
+                        <span className="truncate text-sm font-medium text-ink">
+                          {row.category.name}
+                          <span className="ml-1.5 text-[10px] font-normal text-muted">
+                            {row.fixedAmount > 0 ? "fixed" : row.essential ? "need" : "want"}
+                          </span>
+                        </span>
+                        <span className={`shrink-0 text-sm font-semibold ${over ? "text-rose" : "text-ink"}`}>
+                          {money(row.spent, currency)} spent
+                        </span>
+                      </div>
+                      <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-page">
+                        <div
+                          className={`h-full rounded-full ${
+                            !hasSuggestion ? "bg-line" : over ? "bg-rose" : "bg-plum-500"
+                          }`}
+                          style={{
+                            width: hasSuggestion ? `${Math.max(Math.min(ratio, 1) * 100, 2)}%` : "100%",
+                          }}
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="mt-2.5 flex items-center gap-3 pl-12">
+                    <input
+                      type="text"
+                      inputMode="decimal"
+                      name={`amount:${row.category.id}`}
+                      defaultValue={hasSuggestion ? String(row.suggested) : ""}
+                      placeholder="0.00"
+                      aria-label={`Cap for ${row.category.name}`}
+                      className="dinx-field w-24 py-1.5 text-sm"
+                    />
+                    <label className="flex items-center gap-1.5 text-xs text-ink-soft">
+                      <input
+                        type="checkbox"
+                        name={`fixed:${row.category.id}`}
+                        defaultChecked={row.category.budget_fixed}
+                        className="h-4 w-4 rounded border-line accent-plum-600"
+                      />
+                      Fixed
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => handleReset(row.category.id)}
+                      disabled={resettingId === row.category.id}
+                      className="dinx-tap ml-auto text-xs font-medium text-muted disabled:opacity-50"
+                    >
+                      {resettingId === row.category.id ? "Resetting…" : "Reset"}
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          {error && <p className="text-xs text-rose">{error}</p>}
+
+          <SaveBudgetButton />
+        </form>
+      )}
+    </section>
   );
 }
 
@@ -562,7 +602,7 @@ function RefreshButton() {
   );
 }
 
-function ApplyCapsButton() {
+function SaveBudgetButton() {
   const { pending } = useFormStatus();
   return (
     <button
@@ -570,7 +610,7 @@ function ApplyCapsButton() {
       disabled={pending}
       className="dinx-tap w-full rounded-2xl bg-plum-600 py-3 text-sm font-semibold text-white disabled:opacity-60"
     >
-      {pending ? "Applying…" : "Apply suggested caps to categories"}
+      {pending ? "Saving…" : "Save budget"}
     </button>
   );
 }

@@ -85,8 +85,10 @@ export async function loadBudgetContext({
   ]);
 
   // Known, exact recurring bills — rent, a loan, a subscription — rather
-  // than a guess from noisy history. These are what "fixed" means on the
-  // Budget page: Planned expenses is the household's own source of truth.
+  // than a guess from noisy history. Sourced from Planned expenses, plus
+  // anything marked "Fixed" directly on the Budget page — a category the
+  // household has confirmed by hand always wins with its own figure, since
+  // that's an even more direct signal than a Planned expense.
   const fixedByCategory = new Map<string, number>();
   for (const expense of planned.expenses) {
     if (!expense.category_id) continue;
@@ -94,6 +96,11 @@ export async function loadBudgetContext({
       expense.category_id,
       (fixedByCategory.get(expense.category_id) ?? 0) + Number(expense.amount),
     );
+  }
+  for (const category of categories) {
+    if (category.budget_fixed && category.monthly_budget) {
+      fixedByCategory.set(category.id, Number(category.monthly_budget));
+    }
   }
 
   const bounds = cycleBounds(cycle);

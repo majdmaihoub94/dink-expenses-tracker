@@ -84,6 +84,11 @@ create table if not exists categories (
   kind         txn_kind not null default 'expense',
   -- Soft per-cycle spending cap. Null = untracked.
   monthly_budget numeric(12, 2),
+  -- Marks monthly_budget as a known fixed/recurring cost (set from the
+  -- Budget page) rather than a discretionary cap — treated as exact, never
+  -- recalculated from history, same as a category backed by a Planned
+  -- expense.
+  budget_fixed boolean not null default false,
   sort_order   int not null default 0,
   archived     boolean not null default false,
   created_at   timestamptz not null default now(),
