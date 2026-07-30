@@ -37,6 +37,8 @@ export function budgetAiAvailable(): boolean {
 export type BudgetAiInput = {
   currency: string;
   cycleLabel: string;
+  today: string;
+  cycleEnd: string;
   daysLeft: number;
   elapsedPercent: number;
   income: number;
@@ -45,7 +47,26 @@ export type BudgetAiInput = {
   spentSoFar: number;
   spendable: number;
   pace: { status: string; overspend: number; safeToSpendPerDay: number };
-  categories: { name: string; spent: number; suggested: number; essential: boolean }[];
+  categories: {
+    name: string;
+    essential: boolean;
+    spent: number;
+    suggested: number;
+    /** suggested − spent, floored at 0 — what's left to spend in this category for the rest of the cycle. */
+    remaining: number;
+    /** `remaining` spread over the days left — the daily figure that lands exactly on the suggested cap. */
+    remainingPerDay: number;
+    /** Average size of a single transaction logged in this category this cycle, if any — use this to translate a cash figure into "about N more of these". */
+    avgTransactionAmount: number | null;
+    transactionCount: number;
+  }[];
+  /** Credit cards in use, with their limit and how much of it is currently drawn. */
+  creditCards: {
+    name: string;
+    limit: number | null;
+    spentThisCycle: number;
+    utilizationPercent: number | null;
+  }[];
   forecast: {
     cyclesSampled: number;
     averageIncome: number;
@@ -62,22 +83,30 @@ export type BudgetAiInput = {
 export function buildBudgetAiInput({
   currency,
   cycleLabel,
+  today,
+  cycleEnd,
   income,
   budget,
   spentSoFar,
   allocation,
   pace,
   forecast,
+  categoryStats,
+  creditCards,
   partnerCount,
 }: {
   currency: string;
   cycleLabel: string;
+  today: string;
+  cycleEnd: string;
   income: number;
   budget: HouseholdBudget;
   spentSoFar: number;
   allocation: Allocation;
   pace: BudgetPace;
   forecast: Forecast;
+  categoryStats: Map<string, { count: number; avgAmount: number }>;
+  creditCards: { name: string; limit: number | null; spentThisCycle: number; utilizationPercent: number | null }[];
   partnerCount: number;
 }): BudgetAiInput {
   const savingsTargetAmount = resolveSavingsTarget(budget, income);
@@ -86,9 +115,13 @@ export function buildBudgetAiInput({
       ? `${budget.savings_target_value}% of income (${money(savingsTargetAmount, currency)})`
       : `${money(savingsTargetAmount, currency)} fixed each cycle`;
 
+  const round2 = (n: number) => Math.round(n * 100) / 100;
+
   return {
     currency,
     cycleLabel,
+    today,
+    cycleEnd,
     daysLeft: pace.daysLeft,
     elapsedPercent: Math.round(pace.elapsed * 100),
     income,
@@ -98,17 +131,26 @@ export function buildBudgetAiInput({
     spendable: allocation.spendable,
     pace: {
       status: pace.status,
-      overspend: Math.round(pace.overspend * 100) / 100,
-      safeToSpendPerDay: Math.round(pace.safeToSpendPerDay * 100) / 100,
+      overspend: round2(pace.overspend),
+      safeToSpendPerDay: round2(pace.safeToSpendPerDay),
     },
     categories: allocation.rows
       .filter((r) => r.spent > 0 || r.suggested > 0)
-      .map((r) => ({
-        name: r.category.name,
-        spent: r.spent,
-        suggested: r.suggested,
-        essential: r.essential,
-      })),
+      .map((r) => {
+        const remaining = Math.max(r.suggested - r.spent, 0);
+        const stats = categoryStats.get(r.category.id);
+        return {
+          name: r.category.name,
+          essential: r.essential,
+          spent: r.spent,
+          suggested: r.suggested,
+          remaining: round2(remaining),
+          remainingPerDay: pace.daysLeft > 0 ? round2(remaining / pace.daysLeft) : 0,
+          avgTransactionAmount: stats ? round2(stats.avgAmount) : null,
+          transactionCount: stats?.count ?? 0,
+        };
+      }),
+    creditCards,
     forecast: {
       cyclesSampled: forecast.cyclesSampled,
       averageIncome: Math.round(forecast.averageIncome),
@@ -157,16 +199,16 @@ const SCHEMA = {
         properties: {
           title: {
             type: "string" as const,
-            description: "Short, specific action, e.g. 'Skip two takeaway orders this week'",
+            description: "Short, specific action naming a real category, e.g. 'Cap Food & Drink at £50 for the rest of the cycle'",
           },
           action: {
             type: "string" as const,
             description:
-              "One or two sentences explaining exactly what to do and why, referencing the real numbers given",
+              "One or two sentences using the category's own remaining/remainingPerDay/avgTransactionAmount — e.g. 'that's about £X a day, or roughly N more takeaways at your usual spend' — never invented figures",
           },
           impact: {
             type: "string" as const,
-            description: "Rough cash impact this cycle, e.g. '~£25 back toward your target', or '' if not quantifiable",
+            description: "The £ figure this recommendation is grounded in, e.g. '£25/day for the next 4 days' or '2 more meals out this cycle', or '' if not quantifiable",
           },
         },
         required: ["title", "action", "impact"],
@@ -211,17 +253,29 @@ const SCHEMA = {
   additionalProperties: false,
 };
 
-const SYSTEM = `You are a budgeting co-pilot inside DINX, a shared expense tracker used by a couple who live in the United Kingdom or the Isle of Man.
+const SYSTEM = `You are a budgeting co-pilot inside DINX, a shared expense tracker used by a couple who live in the United Kingdom or the Isle of Man. You are shown one household's real numbers for the current budget cycle, per-category detail, credit card usage, and recent trends. Your entire value is turning those specific numbers into specific, doable actions — a household that wanted generic money advice would not have opened this screen.
 
-You are given one household's real numbers for the current budget cycle, plus recent trends. Turn them into specific, doable actions — never generic filler like "spend less" or "make a budget", and never invent numbers you were not given.
+Ban list — never do any of this:
+- Never say "spend less", "make a budget", "track your spending", "review your subscriptions" or any variant with no number attached.
+- Never suggest a generic action unconnected to what THIS household's data shows (no "consider switching supplier" unless a category/amount in the input actually points at it, no "book travel in advance" unless travel spend is in the data, no "open a savings account" as filler).
+- Never invent a number — every £ figure you write must be one you were given or simple arithmetic on numbers you were given (e.g. remaining ÷ avgTransactionAmount).
+- No disclaimers, no "I recommend", no preamble. State the action.
 
-Rules:
-- Every recommendation must reference the real figures or category names you were given.
-- "recommendations" are for the REST of this cycle — things that can be acted on in days, not months. If the household is already on track or ahead, say so plainly and suggest where the spare money could usefully go instead of inventing a problem.
-- "forecast_tips" look 3-12 months out: habits, one-off decisions, or accounts worth setting up, grounded in the trend data given.
-- "regional_tips" must be actions realistically available specifically in the United Kingdom or the Isle of Man. Where useful, name real institutions or services (e.g. Manx Utilities, Isle of Man Bank, Nationwide IOM, Cumberland, Conister, Steam Packet, an employer pension scheme, NS&I, gov.im, HMRC, Ofgem). Do not state specific interest rates, tax bands, allowances or dates — those change and go stale. Tell the reader to check the current figure instead of stating one.
-- One or two sentences per body. No preamble, no "I recommend", no disclaimers inside the JSON — state the action directly.
-- Isle of Man residents are generally outside the UK's Ofgem price cap and cannot hold a UK ISA — do not suggest either as if they applied, unless the household's numbers suggest they are UK-based.`;
+How to use the numbers you're given, category by category:
+- Each category has "remaining" (what's left of its suggested cap for the rest of the cycle) and "remainingPerDay" (that spread evenly over the days left) — use these directly for pacing language: "keep Groceries to about £remainingPerDay a day and you land around £suggested for the cycle", not your own arithmetic.
+- When a discretionary ("want") category has both "remaining" and "avgTransactionAmount", translate the cash figure into a count of real things: remaining ÷ avgTransactionAmount ≈ how many more of that thing they can still have this cycle (e.g. "that's roughly 2 more takeaways at your usual spend"). Round down and say "about". Do this whenever the numbers support it — it's the single most useful thing you can tell them, more useful than a raw £ figure.
+- "today" and "cycleEnd" are given so you can talk about a specific near-term window (e.g. this weekend, the next few days) when daysLeft is small enough that it's meaningful — don't invent calendar details you can't derive from the dates given.
+- A category with essential: true is a need (rent, bills, groceries, transport, health, insurance) — don't suggest cutting these, only flag if spend looks unusually high against its own suggested figure. Focus recommendations on essential: false (want) categories first.
+
+Credit cards — get this right, it matters:
+- Each entry in "creditCards" has a limit and how much of that limit is currently drawn (spentThisCycle / utilizationPercent). Paying a card off in full frees the limit to be reused — it does NOT create new spendable money and does NOT mean the household can afford to spend that amount again. Never say anything implying a freed-up limit is available budget.
+- The household's goal is to minimise total spending, full stop — a card's utilization resetting to 0% is not itself progress. If utilization is high, that reflects real spending already counted in the category numbers above; don't double-count it or treat it as a separate problem from those categories.
+
+Sections:
+- "recommendations": for the REST of this cycle only — things actionable in days. Ground every one in a specific category's remaining/remainingPerDay/avgTransactionAmount. If the household is already on track or ahead everywhere, say so plainly for one category and suggest where the spare money in "remaining" could go instead (e.g. toward the savings target) rather than inventing a problem.
+- "forecast_tips": 3-12 months out, grounded in "forecast" (averages, projectedAnnualSavings, rising/falling categories) — a specific habit or one-off decision tied to a named category or trend figure, not a generic savings tip.
+- "regional_tips": actions specifically available in the United Kingdom or the Isle of Man, and each one must tie back to something in this household's own data (a category, an amount, a card) — not a generic listicle entry. E.g. if Transport or fuel spend is present, something about that; if there's a credit card, something about repayment/interest; if Groceries is large, an on-island/UK-specific comparison. Name real institutions where useful (Manx Utilities, Isle of Man Bank, Nationwide IOM, Cumberland, Conister, Steam Packet, an employer pension scheme, NS&I, gov.im, HMRC, Ofgem), and never state a specific interest rate, tax band, allowance or date — tell the reader to check the current figure instead. Do not suggest booking travel, buying anything, or opening a product unless the household's own category data shows that's actually relevant to them. Isle of Man residents are generally outside the UK's Ofgem price cap and cannot hold a UK ISA — don't suggest either unless the data implies a UK household.
+- One to two sentences per body, dense with the household's own numbers, not general reassurance.`;
 
 /**
  * Calls the model. Returns null on any failure — unavailable key, refusal,

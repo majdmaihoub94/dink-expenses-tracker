@@ -103,6 +103,10 @@ create table if not exists payment_methods (
   is_default   boolean not null default false,
   archived     boolean not null default false,
   sort_order   int not null default 0,
+  -- Only meaningful for type = 'credit'. Lets Budget treat a card as a
+  -- revolving limit rather than a normal spending category — paying it off
+  -- frees the limit to be reused, it does not create new spendable money.
+  credit_limit numeric(12, 2) check (credit_limit is null or credit_limit >= 0),
   created_at   timestamptz not null default now(),
   unique (household_id, name)
 );

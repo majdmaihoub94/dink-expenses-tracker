@@ -962,10 +962,10 @@ export async function refreshBudgetInsightsAction(formData: FormData): Promise<A
     return fail("Add an ANTHROPIC_API_KEY on the server to enable AI-personalised insights.");
   }
 
-  const { household, members, categories } = await requireContext();
+  const { household, members, categories, paymentMethods } = await requireContext();
   const cycle = resolveCycle(household, str(formData, "cycle_key") || undefined);
 
-  const context = await loadBudgetContext({ household, members, categories, cycle });
+  const context = await loadBudgetContext({ household, members, categories, paymentMethods, cycle });
   if (!context.aiInput) return fail("Set up your income and savings target first.");
 
   const result = await refreshBudgetInsights(household.id, cycle.key, context.aiInput);
@@ -1081,13 +1081,16 @@ export async function savePaymentMethodAction(formData: FormData): Promise<Actio
   const { supabase, householdId } = await requireActor();
 
   const id = str(formData, "id");
+  const type = str(formData, "type") || "bank";
   const payload = {
     household_id: householdId,
     name: str(formData, "name"),
-    type: str(formData, "type") || "bank",
+    type,
     color: str(formData, "color") || "#3B2A50",
     owner_id: str(formData, "owner_id") || null,
     sort_order: Number(str(formData, "sort_order") || "0"),
+    // Only meaningful for a credit card — clears if the type is switched away from one.
+    credit_limit: type === "credit" ? num(formData, "credit_limit") || null : null,
   };
 
   if (!payload.name) return fail("Give the account a name.");

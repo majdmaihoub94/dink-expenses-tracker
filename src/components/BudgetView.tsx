@@ -415,21 +415,38 @@ function ForecastTab(props: BudgetViewProps) {
       {aiInsights?.forecast.tips.map((tip, i) => <TipCard key={`ai-forecast-${i}`} tip={tip} ai />)}
 
       <section>
-        <h2 className="mb-3 text-base font-semibold text-ink">UK &amp; Isle of Man habits</h2>
-        <div className="space-y-2">
-          {aiInsights?.regionalTips.map((tip, i) => <TipCard key={`ai-regional-${i}`} tip={tip} ai />)}
-          {regionalTips.map((tip) => (
-            <div key={tip.id} className="dinx-tile flex gap-3">
-              <span className="text-xl leading-none" aria-hidden>
-                {tip.emoji}
-              </span>
-              <div className="min-w-0">
-                <p className="text-sm font-semibold text-ink">{tip.title}</p>
-                <p className="mt-0.5 text-xs leading-relaxed text-ink-soft">{tip.body}</p>
-              </div>
+        <h2 className="mb-3 text-base font-semibold text-ink">
+          {aiInsights && aiInsights.regionalTips.length > 0
+            ? "UK & Isle of Man — for you"
+            : "UK & Isle of Man habits"}
+        </h2>
+        {aiInsights && aiInsights.regionalTips.length > 0 ? (
+          <div className="space-y-2">
+            {aiInsights.regionalTips.map((tip, i) => (
+              <TipCard key={`ai-regional-${i}`} tip={tip} ai />
+            ))}
+          </div>
+        ) : (
+          <>
+            <p className="mb-2 text-xs text-muted">
+              General starting points — tap &quot;Refresh&quot; above once you have income and a few
+              transactions logged, and these switch to ones grounded in your own numbers.
+            </p>
+            <div className="space-y-2">
+              {regionalTips.map((tip) => (
+                <div key={tip.id} className="dinx-tile flex gap-3">
+                  <span className="text-xl leading-none" aria-hidden>
+                    {tip.emoji}
+                  </span>
+                  <div className="min-w-0">
+                    <p className="text-sm font-semibold text-ink">{tip.title}</p>
+                    <p className="mt-0.5 text-xs leading-relaxed text-ink-soft">{tip.body}</p>
+                  </div>
+                </div>
+              ))}
             </div>
-          ))}
-        </div>
+          </>
+        )}
         <p className="mt-3 text-[11px] leading-relaxed text-muted">
           General information, not financial advice — rates, tax bands and allowances change, so check the
           current figure on gov.im or with your provider before acting on it.

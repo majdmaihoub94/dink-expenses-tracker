@@ -56,6 +56,8 @@ export type PaymentMethod = {
   is_default: boolean;
   archived: boolean;
   sort_order: number;
+  /** Only meaningful for type "credit" — the card's limit, for Budget to reason about. */
+  credit_limit: number | null;
 };
 
 export type Transaction = {
