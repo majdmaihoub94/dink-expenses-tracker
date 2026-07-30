@@ -146,6 +146,17 @@ export type SavingsContribution = {
   occurred_on: string;
 };
 
+export type SavingsTargetType = "percent" | "amount";
+
+export type HouseholdBudget = {
+  household_id: string;
+  monthly_income: number;
+  savings_target_type: SavingsTargetType;
+  savings_target_value: number;
+  updated_by: string | null;
+  updated_at: string;
+};
+
 export type ActivityEvent = {
   id: string;
   household_id: string;

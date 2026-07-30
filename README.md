@@ -23,6 +23,7 @@ deployed on Railway.
 | **Savings goals** | Targets with optional per-cycle contribution goals, deposits and withdrawals, running progress. |
 | **Who owes who** | Shared costs are split by a configurable percentage; the dashboard shows the running balance between you. |
 | **Insights & tips** | Stats → Tips reads your actual numbers — spending pace, category caps, savings rate, cycle-over-cycle movement — alongside evergreen habits. |
+| **Smart budgeting** | Enter your combined income and a savings target; Budget works out a cap per category from your real spending, tracks pace through the cycle and tells you exactly what to ease off if you fall behind, and forecasts where your saving habits are heading — with AI-personalised recovery tips and UK / Isle of Man specific actions when `ANTHROPIC_API_KEY` is set. |
 | **Live sync** | Supabase Realtime refreshes both phones the moment either of you writes something. |
 | **Push notifications** | Your partner gets a push when you log an expense, add income, pay a bill or move savings. Each alert type is individually mutable. |
 
@@ -69,6 +70,7 @@ service (Variables tab) and in a local `.env.local` for development.
 | `NEXT_PUBLIC_VAPID_PUBLIC_KEY` | for push | browser + server | From `npm run vapid` |
 | `VAPID_PRIVATE_KEY` | for push | server only | From `npm run vapid` |
 | `VAPID_SUBJECT` | for push | server only | e.g. `mailto:you@example.com`. Defaults to `mailto:hello@dinx.app` |
+| `ANTHROPIC_API_KEY` | no | server only | Powers the AI parts of statement import and Budget's recovery/forecast tips. Both features work without it — Budget falls back to its rule-based numbers, and import falls back to the deterministic parser. |
 | `PORT` | no | server | Railway injects this automatically |
 
 > **Build-time note:** anything prefixed `NEXT_PUBLIC_` is inlined into the
@@ -138,6 +140,7 @@ src/
       stats/            spending · savings · tips
       planned/          expected bills for the cycle
       savings/          goals, deposits and withdrawals
+      budget/           income, savings target, adaptive pace + forecast
       profile/          identity, notifications, categories, accounts, cycle
     api/
       health/           Railway health check
@@ -150,9 +153,13 @@ src/
     cycle.ts          the 25th-to-25th maths — the heart of the app
     data.ts           server-side queries, totals, settlement balance
     insights.ts       data-driven observations + the tips library
+    budget.ts         rule-based budgeting: smart allocation, pace, forecast
+    budget-ai.ts      optional AI layer over the same numbers, with caching
+    budget-context.ts fetches + wires the two together for the page/actions
     push.ts           web-push dispatch, honouring per-person preferences
     supabase/         browser, server and service-role clients
 supabase/schema.sql   tables, RLS, functions, realtime
+supabase/migrations/  incremental SQL for existing projects (also folded into schema.sql)
 scripts/              icon generator (no image dependencies)
 ```
 

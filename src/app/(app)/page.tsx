@@ -5,9 +5,11 @@ import { CycleSwitcher } from "@/components/CycleSwitcher";
 import { HeroCard } from "@/components/HeroCard";
 import { PushManager } from "@/components/PushManager";
 import { TransactionList } from "@/components/TransactionList";
+import { resolveSavingsTarget } from "@/lib/budget";
 import { cycleBounds, isCurrentCycle, recentCycles, shiftCycle } from "@/lib/cycle";
 import {
   getCycleTrend,
+  getHouseholdBudget,
   getPlanned,
   getSavingsContributions,
   getSavingsGoals,
@@ -30,7 +32,7 @@ export default async function HomePage({
   const { profile, household, members, categories, paymentMethods } = await requireContext();
   const cycle = resolveCycle(household, cycleKey);
 
-  const [transactions, allContributions, goals, planned, trend] = await Promise.all([
+  const [transactions, allContributions, goals, planned, trend, budget] = await Promise.all([
     getTransactions(household.id, cycle),
     // Fetched once for the whole history; this cycle's slice is filtered below
     // rather than costing a second round trip.
@@ -38,6 +40,7 @@ export default async function HomePage({
     getSavingsGoals(household.id),
     getPlanned(household.id, cycle),
     getCycleTrend(household.id, recentCycles(cycle, 6, household.cycle_label_mode)),
+    getHouseholdBudget(household.id),
   ]);
 
   const bounds = cycleBounds(cycle);
@@ -56,6 +59,9 @@ export default async function HomePage({
 
   const savedTotal = allContributions.reduce((sum, c) => sum + Number(c.amount), 0);
   const goalTarget = goals.reduce((sum, g) => sum + Number(g.target_amount), 0);
+
+  const budgetIncome = budget?.monthly_income || totals.income;
+  const spendable = budget ? Math.max(budgetIncome - resolveSavingsTarget(budget, budgetIncome), 0) : null;
 
   const topCategories = [...totals.byCategory.entries()]
     .sort((a, b) => b[1] - a[1])
@@ -163,6 +169,15 @@ export default async function HomePage({
           }
         />
       </div>
+
+      {/* Budget shortcut ---------------------------------------------------- */}
+      <ShortcutTile
+        href={`/budget?cycle=${cycle.key}`}
+        emoji="🎯"
+        title="Budget"
+        value={spendable !== null ? compactMoney(Math.max(spendable - totals.expense, 0), currency) : "Set it up"}
+        caption={spendable !== null ? "left to spend this cycle" : "Cap your spending, adapt as you go"}
+      />
 
       {/* Top categories --------------------------------------------------- */}
       {topCategories.length > 0 && (

@@ -3,7 +3,10 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 
+import { budgetAiAvailable, refreshBudgetInsights } from "@/lib/budget-ai";
+import { loadBudgetContext } from "@/lib/budget-context";
 import { cycleBounds, cycleFor } from "@/lib/cycle";
+import { requireContext, resolveCycle } from "@/lib/data";
 import { money } from "@/lib/format";
 import { notifyHousehold } from "@/lib/push";
 import { createClient } from "@/lib/supabase/server";
@@ -884,6 +887,91 @@ export async function deleteSavingsContributionAction(formData: FormData): Promi
 
   if (error) return fail(error.message);
   refreshAll();
+  return OK;
+}
+
+// ---------------------------------------------------------------------------
+// Budgeting
+// ---------------------------------------------------------------------------
+
+export async function saveBudgetSettingsAction(formData: FormData): Promise<ActionResult> {
+  const { supabase, profile, householdId } = await requireActor();
+
+  const savingsTargetType = str(formData, "savings_target_type") === "amount" ? "amount" : "percent";
+  const monthlyIncome = num(formData, "monthly_income");
+  const savingsTargetValue = num(formData, "savings_target_value");
+
+  if (monthlyIncome < 0) return fail("Income can't be negative.");
+  if (savingsTargetValue < 0) return fail("Savings target can't be negative.");
+  if (savingsTargetType === "percent" && savingsTargetValue > 100) {
+    return fail("A percentage target can't be over 100%.");
+  }
+
+  const { error } = await supabase.from("household_budgets").upsert({
+    household_id: householdId,
+    monthly_income: monthlyIncome,
+    savings_target_type: savingsTargetType,
+    savings_target_value: savingsTargetValue,
+    updated_by: profile.id,
+    updated_at: new Date().toISOString(),
+  });
+
+  if (error) return fail(error.message);
+  refreshAll();
+  return OK;
+}
+
+/** Writes the smart allocation's suggested caps into each category's per-cycle budget. */
+export async function applySuggestedCapsAction(formData: FormData): Promise<ActionResult> {
+  const { supabase } = await requireActor();
+
+  let allocations: { id: string; amount: number }[];
+  try {
+    allocations = JSON.parse(str(formData, "allocations") || "[]");
+  } catch {
+    return fail("Could not read the suggested caps.");
+  }
+
+  if (!Array.isArray(allocations) || allocations.length === 0) return fail("Nothing to apply.");
+
+  const results = await Promise.all(
+    allocations
+      .filter((row) => row?.id && Number.isFinite(Number(row.amount)))
+      .map((row) =>
+        supabase
+          .from("categories")
+          .update({ monthly_budget: Math.round(Number(row.amount) * 100) / 100 })
+          .eq("id", row.id),
+      ),
+  );
+
+  const failed = results.find((r) => r.error);
+  if (failed?.error) return fail(failed.error.message);
+
+  refreshAll();
+  return OK;
+}
+
+/**
+ * Regenerates the AI-powered recovery/forecast/regional-tips read for the
+ * household's current numbers. A no-op that reports why when there's nothing
+ * to analyse yet or no API key configured — see lib/budget-ai.ts.
+ */
+export async function refreshBudgetInsightsAction(formData: FormData): Promise<ActionResult> {
+  if (!budgetAiAvailable()) {
+    return fail("Add an ANTHROPIC_API_KEY on the server to enable AI-personalised insights.");
+  }
+
+  const { household, members, categories } = await requireContext();
+  const cycle = resolveCycle(household, str(formData, "cycle_key") || undefined);
+
+  const context = await loadBudgetContext({ household, members, categories, cycle });
+  if (!context.aiInput) return fail("Set up your income and savings target first.");
+
+  const result = await refreshBudgetInsights(household.id, cycle.key, context.aiInput);
+  if (!result) return fail("Could not generate insights right now — try again in a moment.");
+
+  revalidatePath("/budget");
   return OK;
 }
 

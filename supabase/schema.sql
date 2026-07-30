@@ -245,6 +245,32 @@ create table if not exists savings_contributions (
 create index if not exists savings_contributions_goal_idx on savings_contributions (goal_id, occurred_on desc);
 
 -- ----------------------------------------------------------------------------
+-- Smart adaptive budgeting
+--
+-- household_budgets: income + savings target, one row per household.
+-- budget_ai_cache: the last AI-generated read of those numbers (recovery
+-- recommendations, forecast, UK / Isle of Man tips), regenerated on demand
+-- rather than on every page load — see src/lib/budget-ai.ts.
+-- ----------------------------------------------------------------------------
+create table if not exists household_budgets (
+  household_id          uuid primary key references households on delete cascade,
+  monthly_income         numeric(12, 2) not null default 0 check (monthly_income >= 0),
+  savings_target_type    text not null default 'percent'
+    check (savings_target_type in ('percent', 'amount')),
+  savings_target_value   numeric(12, 2) not null default 20 check (savings_target_value >= 0),
+  updated_by             uuid references profiles on delete set null,
+  updated_at             timestamptz not null default now()
+);
+
+create table if not exists budget_ai_cache (
+  household_id uuid primary key references households on delete cascade,
+  cycle_key    text not null,
+  input_hash   text not null,
+  payload      jsonb not null,
+  generated_at timestamptz not null default now()
+);
+
+-- ----------------------------------------------------------------------------
 -- Activity feed + push subscriptions
 -- ----------------------------------------------------------------------------
 create table if not exists activity_events (
@@ -422,6 +448,8 @@ alter table planned_payments      enable row level security;
 alter table fixed_expenses        enable row level security;
 alter table savings_goals         enable row level security;
 alter table savings_contributions enable row level security;
+alter table household_budgets     enable row level security;
+alter table budget_ai_cache       enable row level security;
 alter table activity_events       enable row level security;
 alter table push_subscriptions    enable row level security;
 
@@ -448,7 +476,8 @@ begin
   foreach t in array array[
     'categories', 'payment_methods', 'transactions', 'planned_expenses',
     'planned_payments', 'fixed_expenses', 'savings_goals',
-    'savings_contributions', 'activity_events'
+    'savings_contributions', 'household_budgets', 'budget_ai_cache',
+    'activity_events'
   ] loop
     execute format('drop policy if exists %I_rw on %I', t, t);
     execute format(
@@ -486,6 +515,8 @@ grant select, insert, update, delete on
   fixed_expenses,
   savings_goals,
   savings_contributions,
+  household_budgets,
+  budget_ai_cache,
   activity_events,
   push_subscriptions
 to authenticated;
