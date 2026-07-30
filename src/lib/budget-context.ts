@@ -1,6 +1,6 @@
 import "server-only";
 
-import { cycleBounds, recentCycles, type Cycle } from "@/lib/cycle";
+import { cycleBounds, cycleProgress, recentCycles, type Cycle } from "@/lib/cycle";
 import {
   buildBudgetPace,
   buildForecast,
@@ -32,8 +32,16 @@ import type { Category, Household, HouseholdBudget, Profile } from "@/lib/types"
 
 /** Completed cycles sampled for history/forecast, on top of the one being viewed. */
 const FORECAST_CYCLES = 6;
-/** How many recent completed cycles the smart allocation averages per category. */
-const ALLOCATION_HISTORY_CYCLES = 3;
+/**
+ * How many samples the smart allocation averages per category — completed
+ * cycles plus, once there's enough of it to extrapolate, the current cycle
+ * itself. A household with little or no cycle history yet still gets a
+ * sensible suggestion from what's actually happening right now, rather than
+ * a near-zero average of almost nothing.
+ */
+const ALLOCATION_SAMPLES = 3;
+/** Don't extrapolate the current cycle to a full-cycle figure until it's at least this far along. */
+const CURRENT_CYCLE_MIN_ELAPSED = 0.15;
 
 export type BudgetContext = {
   budget: HouseholdBudget | null;
@@ -77,21 +85,33 @@ export async function loadBudgetContext({
     (c) => c.occurred_on >= bounds.from && c.occurred_on <= bounds.to,
   );
   const totals = totalsFor(transactions, contributions);
+  const elapsed = cycleProgress(cycle);
 
-  // No income set up yet? Fall back to what's actually landed this cycle so
-  // the page still has something to work with before the first save.
-  const income = budget?.monthly_income || totals.income;
+  // Prefer what's actually landed this cycle over a number typed into the
+  // setup form once — income is real data the moment it's logged, and a
+  // stale manual figure is worse than the truth. The manual figure only
+  // covers the gap before anything has been logged yet (e.g. the first few
+  // days before payday).
+  const income = totals.income > 0 ? totals.income : (budget?.monthly_income ?? 0);
   const savingsTarget = budget ? resolveSavingsTarget(budget, income) : 0;
 
-  const recentForAllocation = completedCycles.slice(-ALLOCATION_HISTORY_CYCLES);
+  // Averaged from recent completed cycles, plus — once it's far enough along
+  // to extrapolate sensibly — this cycle's own pace, projected to a full
+  // cycle. That keeps a brand new household (with little or no completed
+  // history) from getting a near-zero suggestion while real spending is
+  // already happening; it converges toward pure history as more cycles land.
+  const completedSampleCount = elapsed >= CURRENT_CYCLE_MIN_ELAPSED ? ALLOCATION_SAMPLES - 1 : ALLOCATION_SAMPLES;
+  const recentForAllocation = completedCycles.slice(-completedSampleCount);
+
   const historicalByCategory = new Map<string, number>();
   for (const category of categories) {
-    const denom = recentForAllocation.length || 1;
-    const total = recentForAllocation.reduce(
-      (sum, c) => sum + (categoryTrend.get(c.key)?.get(category.id) ?? 0),
-      0,
-    );
-    historicalByCategory.set(category.id, total / denom);
+    const samples = recentForAllocation.map((c) => categoryTrend.get(c.key)?.get(category.id) ?? 0);
+    if (elapsed >= CURRENT_CYCLE_MIN_ELAPSED) {
+      const spentThisCycle = totals.byCategory.get(category.id) ?? 0;
+      samples.push(spentThisCycle / elapsed);
+    }
+    const average = samples.length ? samples.reduce((sum, v) => sum + v, 0) / samples.length : 0;
+    historicalByCategory.set(category.id, average);
   }
 
   const allocation = buildSmartAllocation({
