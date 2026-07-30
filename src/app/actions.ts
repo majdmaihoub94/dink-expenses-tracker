@@ -921,26 +921,43 @@ export async function saveBudgetSettingsAction(formData: FormData): Promise<Acti
   return OK;
 }
 
-/** Writes the smart allocation's suggested caps into each category's per-cycle budget. */
-export async function applySuggestedCapsAction(formData: FormData): Promise<ActionResult> {
+/**
+ * Saves the household's edits to the smart allocation: a cap per category,
+ * optionally marked "fixed" (a known recurring bill, exact and never
+ * recalculated from history — the same treatment a Planned expense gets),
+ * or reset back to letting DINX suggest it. Once saved, the next AI refresh
+ * reads these numbers straight off the categories table — there's no
+ * separate "send this to the AI" step, the allocation and the AI both
+ * always read live from the same place.
+ */
+export async function saveBudgetAllocationAction(formData: FormData): Promise<ActionResult> {
   const { supabase } = await requireActor();
 
-  let allocations: { id: string; amount: number }[];
+  let rows: { id: string; amount: number; fixed?: boolean; reset?: boolean }[];
   try {
-    allocations = JSON.parse(str(formData, "allocations") || "[]");
+    rows = JSON.parse(str(formData, "allocations") || "[]");
   } catch {
-    return fail("Could not read the suggested caps.");
+    return fail("Could not read the budget.");
   }
 
-  if (!Array.isArray(allocations) || allocations.length === 0) return fail("Nothing to apply.");
+  if (!Array.isArray(rows) || rows.length === 0) return fail("Nothing to save.");
 
   const results = await Promise.all(
-    allocations
-      .filter((row) => row?.id && Number.isFinite(Number(row.amount)))
+    rows
+      .filter((row) => row?.id)
       .map((row) =>
         supabase
           .from("categories")
-          .update({ monthly_budget: Math.round(Number(row.amount) * 100) / 100 })
+          .update(
+            row.reset
+              ? { monthly_budget: null, budget_fixed: false }
+              : {
+                  monthly_budget: Number.isFinite(Number(row.amount))
+                    ? Math.round(Number(row.amount) * 100) / 100
+                    : null,
+                  budget_fixed: Boolean(row.fixed),
+                },
+          )
           .eq("id", row.id),
       ),
   );

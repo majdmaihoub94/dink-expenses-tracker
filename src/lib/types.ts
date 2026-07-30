@@ -42,6 +42,8 @@ export type Category = {
   color: string;
   kind: TxnKind;
   monthly_budget: number | null;
+  /** Marks monthly_budget as a known fixed/recurring cost rather than a discretionary cap. */
+  budget_fixed: boolean;
   sort_order: number;
   archived: boolean;
 };
