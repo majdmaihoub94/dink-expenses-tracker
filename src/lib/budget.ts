@@ -36,7 +36,19 @@ const ESSENTIAL_KEYWORDS = [
   "school",
 ];
 
-export function isEssentialCategory(category: Pick<Category, "name">): boolean {
+/**
+ * A category is essential either because its name says so, or — more
+ * reliably — because it has a known fixed/recurring bill against it (rent,
+ * a loan repayment, a subscription…) logged in Planned expenses. That data
+ * is exact, so it always wins over a name guess: a category called "Loan"
+ * would otherwise be read as discretionary just because "loan" isn't in the
+ * keyword list.
+ */
+export function isEssentialCategory(
+  category: Pick<Category, "id" | "name">,
+  fixedCategoryIds?: Set<string>,
+): boolean {
+  if (fixedCategoryIds?.has(category.id)) return true;
   const name = category.name.toLowerCase();
   return ESSENTIAL_KEYWORDS.some((kw) => name.includes(kw));
 }
@@ -60,6 +72,14 @@ export type AllocationRow = {
   suggested: number;
   /** Actual spend so far this cycle. */
   spent: number;
+  /**
+   * Sum of active Planned expenses (rent, a loan, a subscription…) booked
+   * against this category — a known, exact commitment rather than an
+   * estimate. 0 if none. When set, it's what `suggested` is built from, not
+   * the noisy historical average, and it's never scaled down: a fixed
+   * obligation doesn't get cheaper just because the cycle is tight.
+   */
+  fixedAmount: number;
 };
 
 export type Allocation = {
@@ -69,17 +89,25 @@ export type Allocation = {
   discretionaryTotal: number;
   /** Spendable left over once every suggestion is totalled — a buffer, not a target. */
   unallocated: number;
-  /** True when essentials alone would eat almost all of what's spendable. */
+  /** True when the *variable* portion of essentials had to be scaled down to fit. */
   tight: boolean;
+  /** True when known fixed bills alone already exceed what's spendable — no amount of trimming variable spend fixes this. */
+  overCommitted: boolean;
+  /** Sum of every category's fixedAmount — the household's known, non-negotiable monthly commitment. */
+  fixedTotal: number;
 };
 
 /**
- * Splits `income - savingsTarget` across categories: essentials are funded
- * close to what they actually cost, then whatever is left is shared across
- * discretionary categories in proportion to how they've actually been
- * spending — trimmed if that's more than is left, capped at a 10% cushion
- * over history if there's room to spare, so a good cycle doesn't quietly
- * become the new normal. A category with a manually set cap always keeps it.
+ * Splits `income - savingsTarget` across categories. Fixed bills (rent, a
+ * loan, anything with an active Planned expense) are funded at their exact,
+ * known amount — never averaged, never scaled down. Essentials without a
+ * fixed bill behind them (groceries, fuel…) are funded close to what they
+ * actually cost, scaled down only if fixed bills + those together would
+ * exceed what's spendable. Whatever's left after all of that is shared
+ * across discretionary categories in proportion to how they've actually
+ * been spending — trimmed if that's more than is left, capped at a 10%
+ * cushion over history if there's room to spare. A category with a manually
+ * set cap always keeps it, overriding everything above.
  */
 export function buildSmartAllocation({
   income,
@@ -87,20 +115,28 @@ export function buildSmartAllocation({
   categories,
   historicalByCategory,
   spentByCategory,
+  fixedByCategory = new Map(),
 }: {
   income: number;
   savingsTarget: number;
   categories: Category[];
   historicalByCategory: Map<string, number>;
   spentByCategory: Map<string, number>;
+  /** category id → sum of active Planned expenses' amount for that category. */
+  fixedByCategory?: Map<string, number>;
 }): Allocation {
   const expenseCategories = categories.filter((c) => c.kind === "expense");
   const spendable = Math.max(income - savingsTarget, 0);
+  const fixedCategoryIds = new Set(fixedByCategory.keys());
 
-  const essentials = expenseCategories.filter(isEssentialCategory);
-  const discretionary = expenseCategories.filter((c) => !isEssentialCategory(c));
+  const essentials = expenseCategories.filter((c) => isEssentialCategory(c, fixedCategoryIds));
+  const discretionary = expenseCategories.filter((c) => !isEssentialCategory(c, fixedCategoryIds));
 
-  const essentialHistoricalTotal = essentials.reduce(
+  const fixedEssentials = essentials.filter((c) => (fixedByCategory.get(c.id) ?? 0) > 0);
+  const variableEssentials = essentials.filter((c) => (fixedByCategory.get(c.id) ?? 0) === 0);
+
+  const fixedTotal = fixedEssentials.reduce((sum, c) => sum + (fixedByCategory.get(c.id) ?? 0), 0);
+  const variableEssentialHistoricalTotal = variableEssentials.reduce(
     (sum, c) => sum + (historicalByCategory.get(c.id) ?? 0),
     0,
   );
@@ -109,11 +145,22 @@ export function buildSmartAllocation({
     0,
   );
 
-  const tight = essentialHistoricalTotal > 0 && essentialHistoricalTotal > spendable * 0.9;
-  const essentialScale = tight ? (spendable * 0.9) / essentialHistoricalTotal : 1;
-  const essentialSuggestedTotal = essentialHistoricalTotal * essentialScale;
-  const discretionarySpendable = Math.max(spendable - essentialSuggestedTotal, 0);
+  // Fixed bills are paid first, in full, no matter what — they're not a
+  // guess to trim. Only the variable-essential portion ever gets scaled.
+  const overCommitted = fixedTotal > spendable;
+  const roomForVariableEssentials = Math.max(spendable - fixedTotal, 0);
+  const tight =
+    variableEssentialHistoricalTotal > 0 &&
+    variableEssentialHistoricalTotal > roomForVariableEssentials * 0.9;
+  const variableEssentialScale = tight
+    ? (roomForVariableEssentials * 0.9) / variableEssentialHistoricalTotal
+    : 1;
+  const variableEssentialSuggestedTotal = variableEssentialHistoricalTotal * variableEssentialScale;
 
+  const discretionarySpendable = Math.max(
+    spendable - fixedTotal - variableEssentialSuggestedTotal,
+    0,
+  );
   const discretionaryScale =
     discretionaryHistoricalTotal > 0
       ? Math.min(discretionarySpendable / discretionaryHistoricalTotal, 1.1)
@@ -122,11 +169,23 @@ export function buildSmartAllocation({
   const round = (n: number) => Math.round(n * 100) / 100;
 
   const rows: AllocationRow[] = expenseCategories.map((category) => {
-    const essential = isEssentialCategory(category);
+    const essential = isEssentialCategory(category, fixedCategoryIds);
     const historical = historicalByCategory.get(category.id) ?? 0;
-    const scale = essential ? essentialScale : discretionaryScale;
-    const suggested = category.monthly_budget ? Number(category.monthly_budget) : round(historical * scale);
-    return { category, essential, historical, suggested, spent: spentByCategory.get(category.id) ?? 0 };
+    const fixedAmount = fixedByCategory.get(category.id) ?? 0;
+    const scale = essential ? variableEssentialScale : discretionaryScale;
+    const suggested = category.monthly_budget
+      ? Number(category.monthly_budget)
+      : fixedAmount > 0
+        ? fixedAmount
+        : round(historical * scale);
+    return {
+      category,
+      essential,
+      historical,
+      suggested,
+      spent: spentByCategory.get(category.id) ?? 0,
+      fixedAmount,
+    };
   });
 
   const essentialTotal = rows.filter((r) => r.essential).reduce((s, r) => s + r.suggested, 0);
@@ -139,6 +198,8 @@ export function buildSmartAllocation({
     discretionaryTotal,
     unallocated: Math.max(spendable - essentialTotal - discretionaryTotal, 0),
     tight,
+    overCommitted,
+    fixedTotal,
   };
 }
 
@@ -289,20 +350,29 @@ export function buildForecast({
   categories,
   categoryHistory,
 }: {
-  /** Completed cycles, oldest first. */
+  /** Cycles to draw the forecast from, oldest first — completed cycles plus, usually, the current one. */
   samples: CycleSample[];
   categories: Category[];
   /** cycle key → category id → expense total for that cycle. */
   categoryHistory: Map<string, Map<string, number>>;
 }): Forecast {
-  const n = samples.length;
-  const averageIncome = average(samples.map((s) => s.income));
-  const averageExpense = average(samples.map((s) => s.expense));
-  const averageSaved = average(samples.map((s) => s.saved));
+  // Cycles before the household started using DINX are indistinguishable
+  // from cycles with genuinely nothing in them — both show income 0,
+  // expense 0. Averaging those in as "a month with £0 income" would drag
+  // every projection toward zero for no real reason, so only cycles with
+  // some actual recorded activity count. A brand new household ends up
+  // forecasting from just its first real cycle rather than from mostly-empty
+  // history it never had a chance to log.
+  const activeSamples = samples.filter((s) => s.income > 0 || s.expense > 0 || s.saved !== 0);
+
+  const n = activeSamples.length;
+  const averageIncome = average(activeSamples.map((s) => s.income));
+  const averageExpense = average(activeSamples.map((s) => s.expense));
+  const averageSaved = average(activeSamples.map((s) => s.saved));
 
   const half = Math.floor(n / 2);
-  const priorSamples = samples.slice(0, half);
-  const recentSamples = samples.slice(half);
+  const priorSamples = activeSamples.slice(0, half);
+  const recentSamples = activeSamples.slice(half);
 
   const rate = (rows: CycleSample[]) => {
     const income = rows.reduce((s, c) => s + c.income, 0);

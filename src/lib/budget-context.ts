@@ -16,6 +16,7 @@ import {
   getCycleCategoryTrend,
   getCycleTrend,
   getHouseholdBudget,
+  getPlanned,
   getSavingsContributions,
   getTransactions,
   totalsFor,
@@ -74,13 +75,26 @@ export async function loadBudgetContext({
   const historyCycles = recentCycles(cycle, FORECAST_CYCLES + 1, labelMode);
   const completedCycles = historyCycles.slice(0, -1);
 
-  const [budget, transactions, allContributions, categoryTrend, cycleTrend] = await Promise.all([
+  const [budget, transactions, allContributions, categoryTrend, cycleTrend, planned] = await Promise.all([
     getHouseholdBudget(household.id),
     getTransactions(household.id, cycle),
     getSavingsContributions(household.id),
     getCycleCategoryTrend(household.id, historyCycles),
     getCycleTrend(household.id, historyCycles),
+    getPlanned(household.id, cycle),
   ]);
+
+  // Known, exact recurring bills — rent, a loan, a subscription — rather
+  // than a guess from noisy history. These are what "fixed" means on the
+  // Budget page: Planned expenses is the household's own source of truth.
+  const fixedByCategory = new Map<string, number>();
+  for (const expense of planned.expenses) {
+    if (!expense.category_id) continue;
+    fixedByCategory.set(
+      expense.category_id,
+      (fixedByCategory.get(expense.category_id) ?? 0) + Number(expense.amount),
+    );
+  }
 
   const bounds = cycleBounds(cycle);
   const contributions = allContributions.filter(
@@ -122,6 +136,7 @@ export async function loadBudgetContext({
     categories,
     historicalByCategory,
     spentByCategory: totals.byCategory,
+    fixedByCategory,
   });
 
   const pace = buildBudgetPace({
@@ -150,6 +165,23 @@ export async function loadBudgetContext({
       saved: savedByCycle.get(c.key) ?? 0,
     };
   });
+
+  // The current cycle counts toward the forecast too, once it's far enough
+  // along to say something real — a household with little or no completed
+  // history should still forecast from what's actually happening this month
+  // rather than from cycles it never used DINX in. Income isn't projected:
+  // salary tends to land as a lump on a known day, so whatever's logged is
+  // already the real figure, not a rate to extrapolate. Expense is
+  // projected the same way the smart allocation does. Saved is left as
+  // logged — deposits are deliberate, not a daily accrual to extrapolate.
+  if (elapsed >= CURRENT_CYCLE_MIN_ELAPSED) {
+    samples.push({
+      cycle,
+      income,
+      expense: totals.expense / elapsed,
+      saved: totals.saved,
+    });
+  }
 
   const forecast = buildForecast({ samples, categories, categoryHistory: categoryTrend });
 
