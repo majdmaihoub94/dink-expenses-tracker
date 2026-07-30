@@ -175,22 +175,25 @@ function CycleTab(props: BudgetViewProps) {
       <section className="dinx-card">
         <div className="mb-1 flex items-baseline justify-between gap-2">
           <h2 className="text-base font-semibold text-ink">Smart allocation</h2>
-          <span className="text-xs text-muted">Averaged from recent cycles</span>
+          <span className="text-xs text-muted">Recent cycles + this one</span>
         </div>
         <p className="mb-3 text-xs text-muted">
-          Essentials are funded close to what they actually cost; what&apos;s left is shared across
-          everything else, capped so a good cycle doesn&apos;t quietly become the new normal.
+          <span className="font-semibold text-ink">Bold</span> is what you&apos;ve spent so far this
+          cycle. <span className="text-muted">Grey</span> is the suggested cap for the <em>full</em>{" "}
+          cycle — funding needs close to what they actually cost, sharing what&apos;s left across
+          everything else.
         </p>
 
         {allocationRows.length === 0 ? (
           <p className="py-4 text-center text-sm text-muted">
-            Log a few cycles of spending and DINX will suggest a cap per category here.
+            Log a few days of spending and DINX will suggest a cap per category here.
           </p>
         ) : (
           <div className="space-y-3">
             {allocationRows.map((row) => {
-              const ratio = row.suggested > 0 ? row.spent / row.suggested : row.spent > 0 ? 1 : 0;
-              const over = row.suggested > 0 && row.spent > row.suggested;
+              const hasSuggestion = row.suggested > 0;
+              const ratio = hasSuggestion ? row.spent / row.suggested : 0;
+              const over = hasSuggestion && row.spent > row.suggested;
               return (
                 <div key={row.category.id} className="flex items-center gap-3">
                   <span
@@ -210,15 +213,21 @@ function CycleTab(props: BudgetViewProps) {
                       </span>
                       <span className={`shrink-0 text-sm font-semibold ${over ? "text-rose" : "text-ink"}`}>
                         {money(row.spent, currency)}
-                        {row.suggested > 0 && (
-                          <span className="text-muted"> / {money(row.suggested, currency)}</span>
+                        {hasSuggestion ? (
+                          <span className="font-normal text-muted"> / {money(row.suggested, currency)}</span>
+                        ) : (
+                          <span className="font-normal text-muted"> · no cap yet</span>
                         )}
                       </span>
                     </div>
                     <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-page">
                       <div
-                        className={`h-full rounded-full ${over ? "bg-rose" : "bg-plum-500"}`}
-                        style={{ width: `${Math.max(Math.min(ratio, 1) * 100, 2)}%` }}
+                        className={`h-full rounded-full ${
+                          !hasSuggestion ? "bg-line" : over ? "bg-rose" : "bg-plum-500"
+                        }`}
+                        style={{
+                          width: hasSuggestion ? `${Math.max(Math.min(ratio, 1) * 100, 2)}%` : "100%",
+                        }}
                       />
                     </div>
                   </div>
@@ -571,7 +580,7 @@ function SetupSheet({
       >
         <div>
           <label htmlFor="budget-income" className="dinx-label">
-            Combined income per cycle ({currency})
+            Estimated income per cycle ({currency})
           </label>
           <input
             id="budget-income"
@@ -584,7 +593,10 @@ function SetupSheet({
             required
             className="dinx-field text-xl font-semibold"
           />
-          <p className="mt-1 text-xs text-muted">What lands between the two of you each cycle, after tax.</p>
+          <p className="mt-1 text-xs text-muted">
+            A rough guide only, used before this cycle&apos;s income is logged. The moment you add income
+            in DINX, the budget switches to that real total automatically.
+          </p>
         </div>
 
         <div>
