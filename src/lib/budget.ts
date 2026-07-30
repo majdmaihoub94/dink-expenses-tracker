@@ -350,20 +350,29 @@ export function buildForecast({
   categories,
   categoryHistory,
 }: {
-  /** Completed cycles, oldest first. */
+  /** Cycles to draw the forecast from, oldest first — completed cycles plus, usually, the current one. */
   samples: CycleSample[];
   categories: Category[];
   /** cycle key → category id → expense total for that cycle. */
   categoryHistory: Map<string, Map<string, number>>;
 }): Forecast {
-  const n = samples.length;
-  const averageIncome = average(samples.map((s) => s.income));
-  const averageExpense = average(samples.map((s) => s.expense));
-  const averageSaved = average(samples.map((s) => s.saved));
+  // Cycles before the household started using DINX are indistinguishable
+  // from cycles with genuinely nothing in them — both show income 0,
+  // expense 0. Averaging those in as "a month with £0 income" would drag
+  // every projection toward zero for no real reason, so only cycles with
+  // some actual recorded activity count. A brand new household ends up
+  // forecasting from just its first real cycle rather than from mostly-empty
+  // history it never had a chance to log.
+  const activeSamples = samples.filter((s) => s.income > 0 || s.expense > 0 || s.saved !== 0);
+
+  const n = activeSamples.length;
+  const averageIncome = average(activeSamples.map((s) => s.income));
+  const averageExpense = average(activeSamples.map((s) => s.expense));
+  const averageSaved = average(activeSamples.map((s) => s.saved));
 
   const half = Math.floor(n / 2);
-  const priorSamples = samples.slice(0, half);
-  const recentSamples = samples.slice(half);
+  const priorSamples = activeSamples.slice(0, half);
+  const recentSamples = activeSamples.slice(half);
 
   const rate = (rows: CycleSample[]) => {
     const income = rows.reduce((s, c) => s + c.income, 0);

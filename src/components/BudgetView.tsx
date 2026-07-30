@@ -365,6 +365,11 @@ function ForecastTab(props: BudgetViewProps) {
           tone="mint"
         />
       </section>
+      <p className="text-center text-[11px] text-muted">
+        {forecast.cyclesSampled <= 1
+          ? "Based on this cycle so far — an early estimate that sharpens as more cycles land."
+          : `Based on ${forecast.cyclesSampled} cycles with real activity, not cycles before you started logging here.`}
+      </p>
 
       {forecast.savingsRateTrend !== null && Math.abs(forecast.savingsRateTrend) >= 0.02 && (
         <div className={`flex gap-3 rounded-[var(--radius-tile)] p-4 ${forecast.savingsRateTrend > 0 ? "bg-mint-soft" : "bg-coral-soft"}`}>

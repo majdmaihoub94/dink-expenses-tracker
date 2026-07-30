@@ -166,6 +166,23 @@ export async function loadBudgetContext({
     };
   });
 
+  // The current cycle counts toward the forecast too, once it's far enough
+  // along to say something real — a household with little or no completed
+  // history should still forecast from what's actually happening this month
+  // rather than from cycles it never used DINX in. Income isn't projected:
+  // salary tends to land as a lump on a known day, so whatever's logged is
+  // already the real figure, not a rate to extrapolate. Expense is
+  // projected the same way the smart allocation does. Saved is left as
+  // logged — deposits are deliberate, not a daily accrual to extrapolate.
+  if (elapsed >= CURRENT_CYCLE_MIN_ELAPSED) {
+    samples.push({
+      cycle,
+      income,
+      expense: totals.expense / elapsed,
+      saved: totals.saved,
+    });
+  }
+
   const forecast = buildForecast({ samples, categories, categoryHistory: categoryTrend });
 
   // Average transaction size per category this cycle — lets the model
