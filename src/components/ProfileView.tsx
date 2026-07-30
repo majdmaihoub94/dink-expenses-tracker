@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useFormStatus } from "react-dom";
 
 import {
@@ -826,6 +826,11 @@ function AccountsPanel({
 }) {
   const [editing, setEditing] = useState<PaymentMethod | "new" | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [type, setType] = useState<string>("bank");
+
+  useEffect(() => {
+    setType(editing && editing !== "new" ? editing.type : "bank");
+  }, [editing]);
 
   if (!open) return null;
 
@@ -855,13 +860,39 @@ function AccountsPanel({
             <label htmlFor="pm-type" className="dinx-label">
               Type
             </label>
-            <select id="pm-type" name="type" defaultValue={existing?.type ?? "bank"} className="dinx-field">
+            <select
+              id="pm-type"
+              name="type"
+              value={type}
+              onChange={(e) => setType(e.target.value)}
+              className="dinx-field"
+            >
               <option value="bank">Bank account</option>
               <option value="credit">Credit card</option>
               <option value="cash">Cash</option>
               <option value="other">Other</option>
             </select>
           </div>
+
+          {type === "credit" && (
+            <div>
+              <label htmlFor="pm-credit-limit" className="dinx-label">
+                Credit limit
+              </label>
+              <input
+                id="pm-credit-limit"
+                name="credit_limit"
+                type="text"
+                inputMode="decimal"
+                defaultValue={existing?.credit_limit ? String(existing.credit_limit) : ""}
+                placeholder="1500"
+                className="dinx-field"
+              />
+              <p className="mt-1 text-xs text-muted">
+                Lets Budget tell paying this off apart from actually having more to spend.
+              </p>
+            </div>
+          )}
 
           {members.length > 1 && (
             <div>
@@ -936,6 +967,9 @@ function AccountsPanel({
                       <span className="block text-xs text-muted capitalize">
                         {method.type}
                         {owner && ` · ${owner.display_name}`}
+                        {method.type === "credit" && method.credit_limit
+                          ? ` · ${money(Number(method.credit_limit))} limit`
+                          : ""}
                       </span>
                     </button>
                   </form>

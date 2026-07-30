@@ -21,7 +21,7 @@ import {
   totalsFor,
   type CycleTotals,
 } from "@/lib/data";
-import type { Category, Household, HouseholdBudget, Profile } from "@/lib/types";
+import type { Category, Household, HouseholdBudget, PaymentMethod, Profile } from "@/lib/types";
 
 /**
  * Everything the budget page (and the "refresh insights" action) need,
@@ -60,11 +60,13 @@ export async function loadBudgetContext({
   household,
   members,
   categories,
+  paymentMethods,
   cycle,
 }: {
   household: Household;
   members: Profile[];
   categories: Category[];
+  paymentMethods: PaymentMethod[];
   cycle: Cycle;
 }): Promise<BudgetContext> {
   const labelMode = household.cycle_label_mode;
@@ -151,16 +153,50 @@ export async function loadBudgetContext({
 
   const forecast = buildForecast({ samples, categories, categoryHistory: categoryTrend });
 
+  // Average transaction size per category this cycle — lets the model
+  // translate a cash figure into "about N more of these" instead of just a £.
+  const categoryStats = new Map<string, { count: number; avgAmount: number }>();
+  for (const t of transactions) {
+    if (t.kind !== "expense" || !t.category_id) continue;
+    const amount = Number(t.amount);
+    const existing = categoryStats.get(t.category_id);
+    if (existing) {
+      existing.avgAmount = (existing.avgAmount * existing.count + amount) / (existing.count + 1);
+      existing.count += 1;
+    } else {
+      categoryStats.set(t.category_id, { count: 1, avgAmount: amount });
+    }
+  }
+
+  // Credit cards, with how much of their limit is currently drawn — so the
+  // model can tell "the limit reset" apart from "there's more to spend".
+  const creditCards = paymentMethods
+    .filter((m) => m.type === "credit" && !m.archived)
+    .map((m) => {
+      const spentThisCycle = totals.byPaymentMethod.get(m.id) ?? 0;
+      const limit = m.credit_limit ? Number(m.credit_limit) : null;
+      return {
+        name: m.name,
+        limit,
+        spentThisCycle,
+        utilizationPercent: limit && limit > 0 ? Math.round((spentThisCycle / limit) * 1000) / 10 : null,
+      };
+    });
+
   const aiInput = budget
     ? buildBudgetAiInput({
         currency: household.currency,
         cycleLabel: cycle.label,
+        today: new Date().toISOString().slice(0, 10),
+        cycleEnd: bounds.to,
         income,
         budget,
         spentSoFar: totals.expense,
         allocation,
         pace,
         forecast,
+        categoryStats,
+        creditCards,
         partnerCount: members.length,
       })
     : null;

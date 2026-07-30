@@ -16,7 +16,7 @@ deployed on Railway.
 | **Shared household** | Two people, one set of numbers. Invite your partner with an 8-character code. |
 | **25th-to-25th cycles** | Configurable start day (1–28). Every screen is scoped to a cycle and you can step back through history. |
 | **Log for either person** | Every entry records *who it's for* and *who logged it*, so you can add your partner's spend on their behalf. |
-| **Payment methods** | Revolut, Lloyds, HSBC Credit and Cash are seeded. Each person picks their own default, pre-selected on the add form. |
+| **Payment methods** | Revolut, Lloyds, HSBC Credit and Cash are seeded. Each person picks their own default, pre-selected on the add form. Credit cards can carry a limit, so Budget can tell "paid the card off" apart from "have more to spend". |
 | **Categories** | Fully editable, with optional per-cycle caps. Paste a whole list at once from Profile → Categories → *Paste a list*. |
 | **Income & extras** | Income is split into salary vs. extra (bonus, freelance, refunds) and reported separately. |
 | **Expected bills** | Add rent/utilities/subscriptions once; they reappear each cycle. Ticking one off writes a real expense *and* notifies your partner. |

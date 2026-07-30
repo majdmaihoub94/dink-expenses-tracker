@@ -20,10 +20,10 @@ export default async function BudgetPage({
   searchParams: Promise<{ cycle?: string }>;
 }) {
   const { cycle: cycleKey } = await searchParams;
-  const { household, members, categories } = await requireContext();
+  const { household, members, categories, paymentMethods } = await requireContext();
   const cycle = resolveCycle(household, cycleKey);
 
-  const context = await loadBudgetContext({ household, members, categories, cycle });
+  const context = await loadBudgetContext({ household, members, categories, paymentMethods, cycle });
 
   let aiInsights: BudgetAiInsights | null = null;
   let aiStale = false;
