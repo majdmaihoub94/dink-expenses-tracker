@@ -172,6 +172,23 @@ function CycleTab(props: BudgetViewProps) {
 
       <RecoverySection {...props} />
 
+      {allocation.overCommitted && (
+        <section className="flex gap-3 rounded-[var(--radius-tile)] bg-rose/10 p-4">
+          <span className="text-xl leading-none" aria-hidden>
+            🚨
+          </span>
+          <div className="min-w-0">
+            <p className="text-sm font-semibold text-ink">Fixed bills alone exceed what&apos;s spendable</p>
+            <p className="mt-0.5 text-xs leading-relaxed text-ink-soft">
+              {money(allocation.fixedTotal, currency)} in known fixed bills (rent, loans, subscriptions)
+              against {money(allocation.spendable, currency)} spendable after your savings target — that&apos;s
+              before groceries, transport or anything else. No amount of trimming discretionary spend closes
+              that gap; the savings target or income figure needs a second look this cycle.
+            </p>
+          </div>
+        </section>
+      )}
+
       <section className="dinx-card">
         <div className="mb-1 flex items-baseline justify-between gap-2">
           <h2 className="text-base font-semibold text-ink">Smart allocation</h2>
@@ -180,8 +197,8 @@ function CycleTab(props: BudgetViewProps) {
         <p className="mb-3 text-xs text-muted">
           <span className="font-semibold text-ink">Bold</span> is what you&apos;ve spent so far this
           cycle. <span className="text-muted">Grey</span> is the suggested cap for the <em>full</em>{" "}
-          cycle — funding needs close to what they actually cost, sharing what&apos;s left across
-          everything else.
+          cycle. <span className="font-medium text-ink">Fixed</span> categories come straight from
+          Planned expenses — exact, not a guess, and never trimmed. Everything else shares what&apos;s left.
         </p>
 
         {allocationRows.length === 0 ? (
@@ -208,7 +225,7 @@ function CycleTab(props: BudgetViewProps) {
                       <span className="truncate text-sm font-medium text-ink">
                         {row.category.name}
                         <span className="ml-1.5 text-[10px] font-normal text-muted">
-                          {row.essential ? "need" : "want"}
+                          {row.fixedAmount > 0 ? "fixed" : row.essential ? "need" : "want"}
                         </span>
                       </span>
                       <span className={`shrink-0 text-sm font-semibold ${over ? "text-rose" : "text-ink"}`}>

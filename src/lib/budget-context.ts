@@ -16,6 +16,7 @@ import {
   getCycleCategoryTrend,
   getCycleTrend,
   getHouseholdBudget,
+  getPlanned,
   getSavingsContributions,
   getTransactions,
   totalsFor,
@@ -74,13 +75,26 @@ export async function loadBudgetContext({
   const historyCycles = recentCycles(cycle, FORECAST_CYCLES + 1, labelMode);
   const completedCycles = historyCycles.slice(0, -1);
 
-  const [budget, transactions, allContributions, categoryTrend, cycleTrend] = await Promise.all([
+  const [budget, transactions, allContributions, categoryTrend, cycleTrend, planned] = await Promise.all([
     getHouseholdBudget(household.id),
     getTransactions(household.id, cycle),
     getSavingsContributions(household.id),
     getCycleCategoryTrend(household.id, historyCycles),
     getCycleTrend(household.id, historyCycles),
+    getPlanned(household.id, cycle),
   ]);
+
+  // Known, exact recurring bills — rent, a loan, a subscription — rather
+  // than a guess from noisy history. These are what "fixed" means on the
+  // Budget page: Planned expenses is the household's own source of truth.
+  const fixedByCategory = new Map<string, number>();
+  for (const expense of planned.expenses) {
+    if (!expense.category_id) continue;
+    fixedByCategory.set(
+      expense.category_id,
+      (fixedByCategory.get(expense.category_id) ?? 0) + Number(expense.amount),
+    );
+  }
 
   const bounds = cycleBounds(cycle);
   const contributions = allContributions.filter(
@@ -122,6 +136,7 @@ export async function loadBudgetContext({
     categories,
     historicalByCategory,
     spentByCategory: totals.byCategory,
+    fixedByCategory,
   });
 
   const pace = buildBudgetPace({

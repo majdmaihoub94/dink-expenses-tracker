@@ -46,10 +46,16 @@ export type BudgetAiInput = {
   savingsTargetAmount: number;
   spentSoFar: number;
   spendable: number;
+  /** Sum of every category's fixedAmount — rent, loans, subscriptions: the household's known, non-negotiable monthly commitment. */
+  fixedTotal: number;
+  /** True when fixedTotal alone already exceeds spendable — no amount of trimming variable spend fixes this; the savings target or income figure needs revisiting. */
+  overCommitted: boolean;
   pace: { status: string; overspend: number; safeToSpendPerDay: number };
   categories: {
     name: string;
     essential: boolean;
+    /** A known, fixed recurring bill (rent, a loan, a subscription) — exact, not an estimate, and not negotiable within the cycle. Null if this category is not a fixed bill. */
+    fixedAmount: number | null;
     spent: number;
     suggested: number;
     /** suggested − spent, floored at 0 — what's left to spend in this category for the rest of the cycle. */
@@ -129,6 +135,8 @@ export function buildBudgetAiInput({
     savingsTargetAmount,
     spentSoFar,
     spendable: allocation.spendable,
+    fixedTotal: round2(allocation.fixedTotal),
+    overCommitted: allocation.overCommitted,
     pace: {
       status: pace.status,
       overspend: round2(pace.overspend),
@@ -142,6 +150,7 @@ export function buildBudgetAiInput({
         return {
           name: r.category.name,
           essential: r.essential,
+          fixedAmount: r.fixedAmount > 0 ? r.fixedAmount : null,
           spent: r.spent,
           suggested: r.suggested,
           remaining: round2(remaining),
@@ -266,6 +275,8 @@ How to use the numbers you're given, category by category:
 - When a discretionary ("want") category has both "remaining" and "avgTransactionAmount", translate the cash figure into a count of real things: remaining ÷ avgTransactionAmount ≈ how many more of that thing they can still have this cycle (e.g. "that's roughly 2 more takeaways at your usual spend"). Round down and say "about". Do this whenever the numbers support it — it's the single most useful thing you can tell them, more useful than a raw £ figure.
 - "today" and "cycleEnd" are given so you can talk about a specific near-term window (e.g. this weekend, the next few days) when daysLeft is small enough that it's meaningful — don't invent calendar details you can't derive from the dates given.
 - A category with essential: true is a need (rent, bills, groceries, transport, health, insurance) — don't suggest cutting these, only flag if spend looks unusually high against its own suggested figure. Focus recommendations on essential: false (want) categories first.
+- A category with fixedAmount set is a known, exact recurring bill — rent, a loan repayment, a subscription — logged in the household's own Planned expenses, not a guess. Its "suggested" figure IS that fixed amount. NEVER suggest reducing, capping differently, or "targeting" a fixed category — it isn't discretionary and doesn't get cheaper by budgeting harder. The only thing worth saying about a fixed category is if spent already exceeds fixedAmount (something's off — maybe it was paid twice, or logged wrong).
+- If top-level "overCommitted" is true, fixedTotal (their rent + loans + other committed bills) already exceeds spendable on its own — say this plainly as the top recommendation. The fix is revisiting the savings target or income figure, not trimming a "want" category; trimming discretionary spend cannot close a gap caused by fixed bills alone.
 
 Credit cards — get this right, it matters:
 - Each entry in "creditCards" has a limit and how much of that limit is currently drawn (spentThisCycle / utilizationPercent). Paying a card off in full frees the limit to be reused — it does NOT create new spendable money and does NOT mean the household can afford to spend that amount again. Never say anything implying a freed-up limit is available budget.
