@@ -173,11 +173,16 @@ export function buildSmartAllocation({
     const historical = historicalByCategory.get(category.id) ?? 0;
     const fixedAmount = fixedByCategory.get(category.id) ?? 0;
     const scale = essential ? variableEssentialScale : discretionaryScale;
-    const suggested = category.monthly_budget
-      ? Number(category.monthly_budget)
-      : fixedAmount > 0
+    // A fixed bill's amount is exact and always wins — even over a manually
+    // set category cap, which is most likely a stale number from before this
+    // category was recognised as fixed (e.g. an earlier "Apply suggested
+    // caps" tap). Manual caps only matter for genuinely discretionary caps.
+    const suggested =
+      fixedAmount > 0
         ? fixedAmount
-        : round(historical * scale);
+        : category.monthly_budget
+          ? Number(category.monthly_budget)
+          : round(historical * scale);
     return {
       category,
       essential,
